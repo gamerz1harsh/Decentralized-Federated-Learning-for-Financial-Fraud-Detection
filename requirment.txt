@@ -1,0 +1,11 @@
+
+
+# Machine Learning Utilities
+scikit-learn==1.7.1
+
+
+matplotlib==3.10.5
+
+
+jupyter==1.1.1
+ipykernel==6.30.1
