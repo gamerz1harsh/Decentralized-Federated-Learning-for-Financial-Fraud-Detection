@@ -12,9 +12,14 @@ client (bank) partitioning using a Dirichlet distribution.
 ├── dataset/                 # PyTorch Dataset wrapper
 ├── models/                  # MLP fraud detection model
 ├── partition/               # Non-IID Dirichlet split into bank client datasets
+├── fl/                      # Federated core (clients, server, aggregation, scoring)
 ├── training/                # Centralized training pipeline
 ├── checkpoints/             # Saved model weights (not committed)
 └── requirment.txt
+
+Docs: see [DEV_LOG.md](DEV_LOG.md) for phase-by-phase progress and
+[CONTRIBUTING.md](CONTRIBUTING.md) to contribute as a bank.
+
 ```
 
 ## Getting Started
