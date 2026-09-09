@@ -102,17 +102,30 @@ class FedClient:
     def _local_validate(self, train_loss):
         self.model.eval()
         probs, targets = [], []
+
+        criterion = nn.BCEWithLogitsLoss()
+        val_loss = 0.0
+        n_seen = 0
+
         with torch.no_grad():
             for features, labels in self.val_loader:
                 features = features.to(self.device)
+                labels_for_loss = labels.unsqueeze(1).to(self.device)
+
                 outputs = self.model(features)
+
+                loss = criterion(outputs, labels_for_loss)
+                val_loss += loss.item() * features.size(0)
+                n_seen += features.size(0)
+                
                 probs.extend(torch.sigmoid(outputs).cpu().numpy().flatten())
                 targets.extend(labels.cpu().numpy().flatten())
         probs = np.asarray(probs)
         targets = np.asarray(targets)
         preds = (probs >= 0.5).astype(int)
         return dict(
-            loss=float(train_loss),
+            train_loss=float(train_loss),
+            val_loss=float(val_loss / max(n_seen, 1)),
             accuracy=float(accuracy_score(targets, preds)),
             precision=float(precision_score(targets, preds, zero_division=0)),
             recall=float(recall_score(targets, preds, zero_division=0)),

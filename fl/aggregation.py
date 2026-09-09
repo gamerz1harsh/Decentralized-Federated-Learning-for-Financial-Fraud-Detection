@@ -43,7 +43,7 @@ def fedavg(updates, sample_counts=None):
 
 
 def loss_weighted(updates):
-    losses = np.asarray([u["metrics"]["loss"] for u in updates], dtype=np.float64)
+    losses = np.asarray([u["metrics"]["val_loss"] for u in updates], dtype=np.float64)
     inv = 1.0 / np.maximum(losses, 1e-9)
     weights = _weights_from(inv)
     new_state = weighted_average([u["state_dict"] for u in updates], weights)
