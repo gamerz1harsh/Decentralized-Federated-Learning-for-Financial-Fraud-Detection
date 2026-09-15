@@ -61,8 +61,8 @@ model — without ever sharing raw rows.
 └── requirment.txt
 ```
 
-> Longer, tutorial-style narrative: see **[guide.md](guide.md)** (a ready-made
-> study companion with the math, hands-on labs, and exercises).
+> Deep code reference: **[guide.md](guide.md)** documents what every function
+> does, why we wrote it, and how it works — line-by-line across the whole repo.
 > Phase-by-phase progress: **[DEV_LOG.md](DEV_LOG.md)**.
 > Contribute a bank or model: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
@@ -133,9 +133,10 @@ strategies. Prints `SMOKE TEST PASSED`.
 
 ## Where to go next
 
-- **Self-study / course material:** [guide.md](guide.md) — from FL fundamentals
-  and the Dirichlet partition math to the five-dimension scorer, the hands-on
-  labs, exercises, and a full-term syllabus outline.
+- **Function-by-function code reference:** [guide.md](guide.md) — what each
+  function does, why it exists, and how it works, from the partitioner and
+  `FraudDataset` to `FedClient`, `FedServer`, every aggregation strategy, and
+  the 5-dimension `ClientScorer`.
 - **Contributors (submit a bank model):** [CONTRIBUTING.md](CONTRIBUTING.md)
 - **Implementation status & next phases:** [DEV_LOG.md](DEV_LOG.md)
 
