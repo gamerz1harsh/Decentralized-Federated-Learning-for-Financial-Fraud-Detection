@@ -41,7 +41,7 @@ class ClientScorer:
     # ------------------------------------------------------------------
     def _quality(self, updates):
         losses = np.asarray(
-            [u["metrics"]["loss"] for u in updates], dtype=np.float64)
+            [u["metrics"]["val_loss"] for u in updates], dtype=np.float64)
         inv = 1.0 / np.maximum(losses, 1e-9)
         return inv / inv.sum()
 
