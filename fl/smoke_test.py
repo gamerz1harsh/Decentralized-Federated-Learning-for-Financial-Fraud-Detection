@@ -28,7 +28,9 @@ clients = [
 
 for agg in ["contribution_aware", "fedavg", "loss_weighted", "accuracy_weighted"]:
     server = FedServer(clients, "smoke_test.csv", aggregation=agg,
-                       proxy_size=64, batch_size=64)
+                       proxy_size=64, batch_size=64,
+                       reference_path="smoke_test.csv",
+                       evaluate_test_each_round=True)
     hist = server.fit(rounds=2, local_epochs=1, lr=0.001, verbose=False)
     m = hist[-1]["metrics"]
     print(f"[{agg}] OK  round2 ROC-AUC={m['roc_auc']:.4f} F1={m['f1']:.4f}")

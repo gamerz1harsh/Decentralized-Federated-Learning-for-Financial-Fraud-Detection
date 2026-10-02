@@ -1,208 +1,188 @@
-# DEV LOG — Contribution-Aware Federated Learning for Financial Fraud Detection
+# Development Handoff: Federated Fraud Detection
 
-This document tracks the implementation status of the project, phase by phase,
-against the final code-level plan ("Contribution-aware federated core").
-It is updated whenever a phase (or part of one) is completed.
+This file records the code state and next steps so work can continue in another
+AI session without relying on chat history. The roadmap phases follow
+`FL_Fraud_Phase2_Phase3_Roadmap.docx`; the heterogeneous architecture is specified
+in `docs/heterogeneous_architecture.md`.
 
----
+## Decisions
 
-## Overall Phase Map
+- Experiments run in the existing single-machine simulator. Multi-machine
+  deployment is out of scope.
+- Phase 1 means the existing same-schema FL system plus methodological fixes.
+- Phase 2 proves contribution-aware value with a leakage-free harness, scenarios,
+  attacks, baselines, and improved scoring.
+- Phase 3 explores different feature schemas. Follow the architecture spec:
+  each bank owns a private schema-specific encoder; only fixed-width shared torso
+  weights are federated and aggregated. Do not average encoders with different
+  shapes or meanings. Different modalities and deployment are later/optional.
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| Phase 0 | Capped Dirichlet partitioner (`partition/split_non_iid.py`) | ✅ DONE (code) — bank CSVs not yet regenerated on disk |
-| Phase 1 | Federated core `fl/` package (client, server, aggregation, scoring) | ✅ DONE |
-| Phase 2 | Orchestrator + baseline runner (`fl/train_federated.py`) | ⬜ NOT STARTED |
-| Phase 3 | Experiment harness (`experiments/run_experiments.py`, Exp 1–7) | ⬜ NOT STARTED |
-| Phase 4 | Housekeeping & reporting (gitignore, requirements, report refresh) | 🟨 PARTIAL |
+## Implemented in the current worktree
 
----
+- `data/process.ipynb` creates stratified train, validation, and test splits.
+  Scaling parameters are fitted on train only; validation and test are transformed
+  with those parameters. The held-out 30% is split 2:1 into validation and test.
+- `fl/server.py` accepts an explicit validation reference file for contribution
+  scoring. Test evaluation during `fit()` is disabled by default; callers must
+  opt in to per-round test metrics.
+- `training/train.py` is now a CLI baseline: it trains on train, selects the
+  checkpoint using validation loss, selects a threshold on validation, then
+  reports held-out test metrics at fixed and selected thresholds. Seeds, device,
+  and data paths are configurable.
+- `fl/client.py` uses stratified local validation splits when sample counts allow
+  and safely returns NaN ROC-AUC for one-class validation splits; it also reports
+  validation PR-AUC.
+- `dataset/fraud_dataset.py` rejects missing labels, missing values, empty or
+  nonnumeric feature schemas.
+- Aggregation validates input weights and handles empty FedAvg inputs; scorer
+  quality handles invalid losses.
+- `experiments/run_experiments.py` provides a local seeded sweep across methods,
+  client counts, Dirichlet settings, and seeds; writes incremental JSON history
+  under `results/`. It refuses absent input files and validation/test path reuse.
+- `partition/split_non_iid.py` supports explicit train and output paths.
+- `.gitignore` excludes generated results.
+- The experiment runner uses validation for per-round metrics and threshold
+  calibration, then evaluates test once at the final round.
 
-## Phase 0 — Capped Dirichlet Partitioner ✅ (code complete)
+## Phase 2 implementation status
 
-**File:** `partition/split_non_iid.py`
+Phase 2 is **in progress, not complete**. The local experiment runner, baselines,
+scoring/dashboard, stress-scenario generators, and initial clean/sign-flip
+comparisons are implemented. Remaining evaluation gaps are listed below.
 
-What was implemented:
+- Added FedProx proximal regularization, coordinate median, trimmed mean, and
+  Krum aggregation. Krum selects its Byzantine tolerance from the client count;
+  four-client runs cannot guarantee tolerance of one malicious client.
+- Added scale, sign-flip, and Gaussian update attacks, injectable into a chosen
+  client in the local experiment runner.
+- Rebuilt the same-schema scorer around explicit contribution definitions:
+  quality is local validation PR-AUC shrunk toward the cohort for low fraud counts;
+  trust is robust update-scale reliability plus client-specific history (not
+  consensus similarity); novelty is leave-one-out log-loss gain on hard fraud
+  cases; complementarity is leave-one-out reference PR-AUC gain with a paired,
+  class-stratified bootstrap lower bound; temporal is an EMA of marginal utility.
+  Estimates use the full validation reference, never the final test split.
+- Saved round traces now include client IDs and raw novelty/complementarity
+  diagnostics. Added a Streamlit dashboard at `dashboard/app.py` for training
+  curves, per-client scores/weights, and paired final-test comparisons; partial
+  sweeps and fewer-than-three-seed artifacts are labeled exploratory.
+- Added real-column schema inspection/comparison/shard generation helpers and
+  encoder/shared-torso model blocks. These are components, not yet a complete
+  heterogeneous FL runner.
+- Generated disjoint schema shards under `data/processed/schema_banks/`: bank_a
+  has 11 features / 73,607 rows / 70 fraud; bank_b has 17 / 115,002 / 176;
+  bank_c has 16 / 9,999 / 85. All train rows and fraud labels are conserved.
+- Added unit checks for robust aggregation, attack transformations, and torso-only
+  shared state. They pass with the existing end-to-end smoke workflow.
+- CUDA is available on the RTX 5050 Laptop GPU with PyTorch 2.13.0+cu130.
+- A one-round CUDA sign-flip pilot completed for FedAvg, median, trimmed mean,
+  Krum, and contribution-aware. Results are in
+  `results/phase2_attack_pilot/federated_20261001T211620Z.json`; its summary is
+  adjacent. This verifies the path only; it does not show robust superiority.
+- A one-round FedProx pilot completed with `mu=0.01`; results are under
+  `results/phase2_fedprox_pilot/`.
+- The current validation-round/test-once protocol passed a one-round CUDA check;
+  result and summary are under `results/phase2_protocol_check/`. Round metrics
+  are labeled validation and final test metrics are stored separately.
+- CUDA centralized training completed for 20 epochs; checkpoint chosen on
+  validation loss. At fixed threshold 0.5, held-out ROC-AUC was 0.9553, PR-AUC
+  0.6770, F1 0.0945, precision 0.0499, recall 0.8936. Treat the F1/precision
+  as threshold-sensitive; the trainer now also selects a threshold using only
+  validation predictions and reports test metrics at both thresholds.
+  The validation-selected threshold was 0.992068; its test F1 was 0.8298
+  (precision and recall both 0.8298), while ranking metrics were unchanged.
+- A 20-round, three-seed clean matrix finished before the PR-AUC scorer refactor
+  at `results/federated_20261001T204502Z.json`. A second PR-AUC-enabled matrix
+  was interrupted after seed 43 loss-weighted. Do not combine these files; rerun
+  the clean matrix after the scorer stabilizes.
+- A post-refactor 20-round clean comparison completed on CUDA for seeds 42-44
+  (`results/phase2_clean_matrix/`). The contribution-aware mean test PR-AUC was
+  0.7031 versus FedAvg 0.7102; paired delta was -0.0072 (95% t interval
+  [-0.0328, 0.0185]). It does not establish a clean-data gain.
+- A 10-round five-client sign-flip comparison completed on CUDA for seeds
+  42-44 (`results/phase2_signflip_matrix/`). Contribution-aware PR-AUC exceeded
+  FedAvg on all three seeds, with mean paired delta +0.0301, but its 95% t
+  interval crossed zero ([-0.0363, 0.0966]). Robust coordinate baselines had
+  slightly higher mean PR-AUC but lower ROC-AUC. This is preliminary evidence,
+  not a robustness or superiority claim; only three seeds and 47 test frauds.
+- Added deterministic quantity-skew, feature-skew, temporal, and noisy-label
+  partitions; scorer ablation profiles; coordinate-level influence accounting
+  for median/trimmed mean; and per-round result callbacks. These are harness
+  capabilities, not yet completed scenario/ablation evaluations.
+- Continued Phase 2 scenario screening (5 rounds, 8-12 scorer bootstrap draws,
+  mostly 4 seeds) on CUDA. Feature-skew and quantity-skew have completed scorer
+  and baseline panels; temporal, scale-attack, norm-matched Gaussian-noise, and
+  client-local label-noise screens are also complete. Artifacts and paired
+  statistics are summarized in `docs/phase2_status.md`.
+- The corrected five-round feature-skew matrix used 12 class-stratified
+  bootstrap draws with replacement and explicit method metadata. Full scoring
+  averaged 0.7170 PR-AUC vs. 0.7119 for quality-only; paired delta +0.0051
+  (95% seed-based t interval [-0.0076, +0.0178]). Three of four seed deltas
+  were +0.0006 to +0.0015, while seed 45 contributed +0.0170. Full scoring
+  differed from quality plus novelty and complementarity by only +0.0002 on
+  average. This does not establish repeatable incremental utility-profile
+  value; see `docs/phase2_status.md` and
+  `results/phase2_feature_skew_bootstrap/`.
+  The 5-round quantity-skew screen showed a +0.0416 paired delta, but its
+  10-round follow-up reversed direction: -0.0299 across all four seeds
+  (seed-based 95% t interval [-0.0494, -0.0105]). Do not claim
+  contribution-aware superiority from the short screen.
+- Scale attack (client 0 update delta multiplied by 10) exposed a scorer failure:
+  mean contribution-aware minus FedAvg PR-AUC was -0.0234 over three seeds, and
+  in one seed the attacker's trust remained 1.0. Robustness is unresolved.
+- Temporal methods were nearly tied; current temporal partitioning is not a
+  chronological held-out evaluation. Gaussian-noise and 30% one-client label
+  noise results were inconclusive (paired intervals include zero).
+- Bootstrap audit: an intermediate class-stratified implementation sampled
+  without replacement to retain both classes. **Correction:** that variant was
+  not a valid bootstrap because
+  it only permuted the fixed sample. Restored class-stratified sampling with
+  replacement and strengthened the test to require non-degenerate bounds.
+  The intermediate feature/temporal/attack/noisy-label scorer screens are
+  provisional; fixed aggregation baselines are unaffected. The original clean
+  and sign-flip matrices used the correct bootstrap. A corrected 10-round
+  quantity-skew follow-up averaged -0.0236 paired PR-AUC vs. FedAvg across four
+  seeds (95% seed interval [-0.0503, +0.0032]); all four paired deltas were
+  negative. Corrected scale-10 attack rerun had contribution-aware mean PR-AUC
+  0.6850 vs. FedAvg 0.7143, paired delta -0.0293 over three seeds (95% interval
+  [-0.0975, +0.0389]). Two seeds had sizable degradation. The corrected
+  feature-skew scorer ablation is complete and summarized above.
+- Client local PR-AUC is marked undefined (NaN) when its validation split has
+  no positives; cohort shrinkage handles that case. Quantity-skew allocation
+  now guarantees non-empty clients and exact row conservation.
 
-- **`capped_dirichlet_split(class_df, alpha, num_clients, min_frac, max_frac, rng)`**
-  - Draws per-class proportions `ν ~ Dirichlet(α, …, α)`.
-  - Clamps each bank's proportion to `[min_frac, max_frac]` (defaults **0.05 / 0.60**, "loose caps").
-  - Iteratively renormalizes after clamping (up to 60 iterations, converged via `np.allclose`).
-  - Assigns integer counts via the **largest-remainder method** so the total is exact and
-    every bank keeps at least `floor(min_frac × n)` rows of each class.
-- **Feasibility validation**: raises `ValueError` if `num_clients × min_frac > 1` or
-  `num_clients × max_frac < 1` for a class.
-- **Per-class splitting**: normal (`Class==0`) and fraud (`Class==1`) rows are split
-  independently — this guarantees the **minimum fraud guarantee** (with the Kaggle
-  credit-card dataset's 378 fraud rows in the processed train split, every bank gets
-  ≥ ~18 fraud rows since `4 × 0.05 ≤ 1`).
+## Remaining before Phase 2 can be called complete
 
----
+- Broader and deeper paired stress testing remains: current scenario/attack
+  screens are mostly five rounds and use a repeatedly inspected fixed test set.
+  They are exploratory and not enough to call Phase 2 complete.
+- Heterogeneous encoder/torso training and its evaluation reference are not yet
+  wired into FedClient/FedServer. Independent private encoders can rotate the
+  latent basis differently; equal latent width alone does not make torso averaging
+  valid. Resolve alignment (for example, shared feature-keyed projection weights
+  or teacher-aligned local encoders) before claiming schema-heterogeneous FL.
+- The scorer was benchmarked against FedAvg and robust baselines in the two
+  matrices above, but has not passed a broad evaluation. Do not claim novelty,
+  robustness, or superiority until scenario/attack ablations and literature
+  comparisons are completed.
 
-## Phase 1 — Federated Core ✅ DONE
+## Next actions
 
-**Package:** `fl/` (report §3.3–3.5)
+1. Improve trust calibration for scaled updates and test against stronger,
+   adaptive attacks without punishing ordinary client heterogeneity.
+2. Repeat key scenarios at 20 rounds with more seeds and a prespecified,
+   untouched evaluation set; add chronological train/validation/test splits.
+3. Review novelty against contribution-valuation literature; generic leave-one-
+   out utility, update reliability, and class-specific value are not by
+   themselves novel claims.
+4. Wire local encoders and a shared torso only after resolving latent alignment
+   and canonical validation encoder design.
 
-### `fl/__init__.py`
-Package marker; exports `FedClient` and `FedServer`.
+## Useful commands
 
-### `fl/client.py` — `FedClient`
-A single bank (client). Holds its private shard and **never shares raw rows** —
-only trained weights + local validation metrics.
-
-- Splits its shard into train/val (80/20, seeded `torch.Generator`); tiny shards keep
-  everything for training (guard).
-- `train(global_state, local_epochs=1..3, lr, pos_weight=True)`:
-  1. Loads the distributed global state (`_apply_global`, cloned tensors).
-  2. Trains locally with `BCEWithLogitsLoss`; **per-shard `pos_weight`** computed
-     from the local class counts (`n_neg / n_pos`) for class imbalance.
-  3. Adam optimizer, per-epoch loop over its DataLoader.
-  4. Returns `{client_id, state_dict (cloned), n_samples, metrics}`.
-- `_local_validate` computes loss, accuracy, precision, recall, F1, ROC-AUC on its
-  private validation split.
-
-### `fl/server.py` — `FedServer`
-Global-model orchestrator running R rounds:
-
-1. Distribute global model → 2. clients train locally → 3. clients upload
-   weights + metrics → 4. server scores each update along the **five dimensions**
-   → 5. aggregate with contribution scores → 6. redistribute.
-
-- Constructor takes `clients`, `test_path`, `aggregation`
-  (`"contribution_aware"` default; also `"fedavg"`, `"loss_weighted"`,
-  `"accuracy_weighted"`), optional external `ClientScorer`, `proxy_size=2048`.
-- **Server-side proxy mix**: a fixed seeded subset of the **held-out test set**
-  (`proxy_size` rows) — never any bank's raw rows — used for complementarity
-  scoring (report §3.5).
-- `_evaluate()` scores the global model on the full held-out test set each round:
-  ROC-AUC, F1, precision, recall.
-- `aggregate(updates)` dispatches to the chosen strategy; for
-  `contribution_aware` it calls `ClientScorer.compute_weights(...)` then
-  `contribution_aware(...)`, and stores `last_scores`.
-- `fit(rounds, local_epochs, lr, verbose)` records a per-round history entry:
-  `{round, weights, metrics, scores}`.
-
-### `fl/aggregation.py`
-- `weighted_average(state_dicts, weights)` — per-key `torch.stack(terms).sum(0)`.
-- `fedavg(updates)` — sample-count weighting (McMahan et al.).
-- `loss_weighted(updates)` — inverse local validation loss (report §4.8).
-- `accuracy_weighted(updates)` — local validation accuracy (report §4.8).
-- `contribution_aware(updates, weights)` — consumes externally computed weights.
-- All weight helpers fall back to uniform when weights sum to ≤ 0.
-
-### `fl/scoring.py` — `ClientScorer` (5-dim scorer + softmax weights)
-`S_i = Σ_k λ_k · s_{i,k}`, then `w_i = softmax(S_i / temperature)`.
-
-| Dimension | Definition | Default λ |
-|-----------|------------|-----------|
-| quality | inverse local validation loss, normalized | 0.25 |
-| trust | consistency of updates across rounds (cosine alignment of each client's Δweights with the mean Δ) | 0.25 |
-| novelty | L2 deviation of the client model from the current global model, normalized by max | 0.15 |
-| complementarity | cross-impact on the server-side **proxy mix** (loss gain vs. the average model); neutral 0.5 when `use_proxy_mix=False` (ablation flag) | 0.20 |
-| temporal | EMA (decay 0.7) trend of prior combined scores per client (Appendix B) | 0.15 |
-
-- Persistent state per client: `self.ema` (temporal trend) and `self.trust_hist`.
-- Returns `(weights, scores_dict)` with all five raw score arrays — logged per
-  round by the server.
-
-### `fl/smoke_test.py`
-Generates small synthetic CSVs (30 features + `Class`), runs **2 rounds for all
-four aggregation strategies** (`contribution_aware`, `fedavg`, `loss_weighted`,
-`accuracy_weighted`) and asserts the loop completes.
-Run: `python fl/smoke_test.py` → prints `SMOKE TEST PASSED`.
-
-**Privacy property by design**: the server only ever touches client `state_dict`s +
-metrics; the proxy mix comes from the held-out test set, never bank rows.
-
----
-
-## Phase 2 — Orchestrator + Baselines ⬜ NOT STARTED
-
-Planned:
-
-- **`fl/train_federated.py`** — CLI orchestrator that runs the FL loop for any chosen
-  aggregation method (`--aggregation fedavg|loss_weighted|accuracy_weighted|contribution_aware`),
-  pointing clients at `data/processed/banks/*.csv` and the server at
-  `data/processed/test.csv`; logs per-round metrics and contribution scores to `results/`.
-- Baselines per report §4.8: FedAvg, loss-weighted, accuracy-weighted.
-- **Validation gate**: confirm per-round global ROC-AUC/F1 improve over the
-  centralized baseline (`training/train.py`) before moving to Phase 3.
-
----
-
-## Phase 3 — Experiment Harness ⬜ NOT STARTED
-
-Planned: `experiments/run_experiments.py` (report §4.9), all results saved to `results/`:
-
-| Exp | Description |
-|-----|-------------|
-| 1 | FedAvg baseline |
-| 2 | quality + trust only vs FedAvg |
-| 3 | full 5-dim vs FedAvg + each single-metric variant |
-| 4 | ablation — remove one dimension at a time (`use_proxy_mix` controls complementarity) |
-| 5 | vary α (0.1 / 0.5 / 1.0) — via `--alpha` and `--min-frac`/`--max-frac` overrides |
-| 6 | vary clients (4 / 8) — via `--num-banks` |
-| 7 | concept drift — swap fraud patterns mid-training |
-
----
-
-## Phase 4 — Housekeeping & Reporting 🟨 PARTIAL
-
-Done:
-- `report/make_figures.py`, `report/make_report.py`, `report/make_ppt.py` exist and
-  generated outputs (`report/figures/fig1..fig6`, `Project_Report.docx`,
-  `Project_Presentation.pptx`).
-- `.gitignore` covers `.venv/`, raw/processed data, `checkpoints/`, `logs/`,
-  `*.pth`, `__pycache__/`, report artifacts.
-
-Outstanding:
-- Add `results/` to `.gitignore` (alongside `checkpoints/`).
-- Fix `requirment.txt`: currently only `scikit-learn`, `matplotlib`, `jupyter`,
-  `ipykernel` — still missing **`torch`, `numpy`, `pandas`, `tqdm`** (plus stray
-  blank lines to clean up).
-- Regenerate report figures/PPT with real experiment numbers; refresh Chapters 5–6
-  (preliminary → final; conclusions ↔ research questions §6.3).
-- Regenerate `data/processed/banks/*.csv` (Phase 0 outputs) so Phase 2 can run.
-
----
-
-## Repository Map (current)
-
+```powershell
+python -m fl.smoke_test
+python -m training.train --device cuda --threads 2
+python -m experiments.run_experiments --device cuda --threads 2 --batch-size 512 --rounds 20 --seeds 42 43 44
+python -m experiments.run_experiments --device cuda --rounds 20 --seeds 42 43 44 --methods fedavg median trimmed_mean krum contribution_aware --attack sign_flip
 ```
-├── data/process.ipynb          # preprocessing notebook → train.csv / test.csv
-├── dataset/fraud_dataset.py    # FraudDataset PyTorch Dataset (30 features + Class)
-├── models/fraud_model.py       # FraudDetectionModel MLP: 30→64→32→1 (dropout 0.3)
-├── partition/split_non_iid.py  # Phase 0: capped Dirichlet partitioner ✅
-├── fl/                         # Phase 1: federated core ✅
-│   ├── client.py / server.py / aggregation.py / scoring.py / smoke_test.py
-├── training/train.py           # centralized baseline → checkpoints/best_model.pth
-├── report/                     # make_figures / make_report / make_ppt + outputs
-└── requirment.txt              # ⚠ needs fixing (Phase 4)
-```
-
-## Locked Design Decisions
-
-1. **Loose caps default** — `min_frac=0.05`, `max_frac=0.60`, CLI-configurable.
-2. **Complementarity via server-side proxy mix** (§3.5) — controlled by the
-   `use_proxy_mix` flag for the ablation study.
-3. **Privacy claim honored** — the server never sees raw bank rows; clients only
-   upload weights + local metrics.
-
-
-
-- **Per-bank summary table** printed at the end: samples, normal, fraud cases,
-  fraud ratio, file size (MB), plus total-fraud and smallest-fraud-shard checks.
-- **CLI flags**: `--alpha` (default 0.1), `--num-banks` (default 4), `--min-frac`
-  (default 0.05), `--max-frac` (default 0.60), `--seed` (default 42).
-  Validation: `num_banks >= 2`, `0 < min_frac <= max_frac <= 1`.
-- **Output** (unchanged default): `data/processed/banks/bank_a.csv`, `bank_b.csv`, …
-  Run with `python partition/split_non_iid.py`.
-
-Design notes locked in:
-- Loose caps (5% / 60%) are the defaults; the CLI overrides let experiments 5/6 sweep
-  settings without editing code.
-- Largest shard ≈ ≤ 60% of normal rows → ≤ ~75 MB per bank (down from ~125 MB monolith).
-
-**Outstanding**: run the partitioner to actually generate `data/processed/banks/*.csv`
-on this machine (the script is written and committed, but the outputs are gitignored
-and have not been generated in this clone).

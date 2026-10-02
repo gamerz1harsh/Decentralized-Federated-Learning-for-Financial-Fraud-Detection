@@ -66,6 +66,8 @@ def parse_args():
     parser.add_argument("--min-frac", default=MIN_FRAC, type=float, help="min fraction")
     parser.add_argument("--max-frac", default=MAX_FRAC, type=float, help="max fraction")
     parser.add_argument("--seed", default=RANDOM_SEED, type=int, help="random seed")
+    parser.add_argument("--train-path", type=Path, default=TRAIN_PATH)
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
     args = parser.parse_args()
     if args.num_banks < 2:
         parser.error("--num-banks must be >= 2")
@@ -78,9 +80,9 @@ def parse_args():
 def main():
     print("Script Started", flush=True)
     args = parse_args()
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    print(f"Saving to: {OUTPUT_DIR}", flush=True)
-    df = pd.read_csv(TRAIN_PATH)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Saving to: {args.output_dir}", flush=True)
+    df = pd.read_csv(args.train_path)
     print(f"Training Samples : {len(df)}", flush=True)
     fraud = df[df["Class"] == 1].copy()
     normal = df[df["Class"] == 0].copy()
@@ -94,7 +96,7 @@ def main():
     for i in range(args.num_banks):
         bank_df = pd.concat([normal_split[i], fraud_split[i]])
         bank_df = bank_df.sample(frac=1, random_state=args.seed).reset_index(drop=True)
-        output_path = OUTPUT_DIR / f"{bank_names[i]}.csv"
+        output_path = args.output_dir / f"{bank_names[i]}.csv"
         bank_df.to_csv(output_path, index=False)
         fraud_count = int(bank_df["Class"].sum())
         normal_count = len(bank_df) - fraud_count
@@ -108,7 +110,7 @@ def main():
         print(f"Fraud Ratio    : {fraud_ratio:.3f}%", flush=True)
         print(f"File Size(MB) : {size_mb:.2f}", flush=True)
         total_fraud_saved += fraud_count
-    min_fraud_saved = min(int(pd.read_csv(OUTPUT_DIR / f"{bank_names[i]}.csv")["Class"].sum()) for i in range(args.num_banks))
+    min_fraud_saved = min(int(pd.read_csv(args.output_dir / f"{bank_names[i]}.csv")["Class"].sum()) for i in range(args.num_banks))
     print("\n------------------------------", flush=True)
     print(f"Total fraud across banks    : {total_fraud_saved}  (expected ~{len(fraud)})  ", flush=True)
     print(f"Smallest per-bank fraud count : {min_fraud_saved}", flush=True)

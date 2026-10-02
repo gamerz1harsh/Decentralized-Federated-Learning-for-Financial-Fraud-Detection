@@ -9,7 +9,7 @@ data/raw/
 data/processed/
 
 # --- Reports / generated documents ---
-report/
+/report/figures/
 *.pdf
 *.docx
 *.pptx
@@ -22,7 +22,11 @@ report/
 # --- Outputs ---
 checkpoints/
 logs/
+results/
 *.pth
+/smoke_bank_a.csv
+/smoke_bank_b.csv
+/smoke_test.csv
 
 # --- Python ---
 __pycache__/

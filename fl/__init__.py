@@ -21,6 +21,9 @@ from fl.aggregation import (
     loss_weighted,
     accuracy_weighted,
     contribution_aware,
+    coordinate_median,
+    trimmed_mean,
+    krum,
 )
 from fl.scoring import ClientScorer
 
@@ -31,5 +34,8 @@ __all__ = [
     "loss_weighted",
     "accuracy_weighted",
     "contribution_aware",
+    "coordinate_median",
+    "trimmed_mean",
+    "krum",
     "ClientScorer",
 ]
