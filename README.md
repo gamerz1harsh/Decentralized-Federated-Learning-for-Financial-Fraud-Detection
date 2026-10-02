@@ -1,4 +1,4 @@
-# Decentralized Federated Learning for Financial Fraud Detection
+# Contribution-Aware Federated Learning for Financial Fraud Detection
 
 A **contribution-aware federated learning simulation** for credit card fraud
 detection. Simulated banks train on separate, **non-IID** transaction shards
