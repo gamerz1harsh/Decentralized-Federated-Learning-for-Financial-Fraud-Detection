@@ -1,16 +1,16 @@
 # Heterogeneous Federated Architecture — Design
 
-**Status:** Draft for review
-**Author:** Project team
+**Status:** Design note; encoder/torso prototypes exist, but the training path is not integrated
 **Scope:** Evolution of the fl/ framework so that federated clients may have
 - different *feature schemas* (same task), and eventually
 - different *data modalities* (same task)
 
 without breaking the existing single-schema horizontal-FL behavior.
 
-This document is the **paper / architecture write-up** requested before any code
-is changed. It fixes which parameters are shared vs. local, where novelty lives,
-and the Stage-2 schema design. Code changes land only after this is reviewed.
+This document records our proposed architecture for feature-schema
+heterogeneity and separates that design from the current same-schema training
+implementation. Some supporting model and data-schema helpers now exist; the
+end-to-end client/server protocol remains future work.
 
 ---
 
@@ -100,13 +100,14 @@ exactly to the existing model (bit-identical behavior). Backward compatible.
 | Local split indices, loaders | Bank `k` only | No | Data never leaves the bank (privacy) |
 | Scorer persistent state (EMA, trust_hist) | Server | — | Server bookkeeping over shared-space updates |
 
-Because only the torso is federated, the server never sees raw inputs or the
-per-bank encoders — preserving the existing privacy claim that the server only
-touches weight vectors and metrics.
+In the proposed protocol, only the torso parameters would be federated; local
+encoders and raw inputs would remain on their clients. This describes the
+intended data boundary, not a formal privacy guarantee. The current simulator
+does not implement secure aggregation or differential privacy.
 
 ---
 
-## 4. Federation protocol (per round)
+## 4. Proposed Federation Protocol (Per Round)
 
 1. Server holds global torso `θ_torso`. Distributes it to all clients.
 2. Client `k` overwrites its local torso with `θ_torso`, keeps its private
@@ -121,19 +122,21 @@ touches weight vectors and metrics.
 
 ## 5. Contribution scoring: where novelty now lives
 
-The five-dimension `ClientScorer` (fl/scoring.py) is preserved, but its inputs
-now come from the **shared space**. This is the crux of the research angle:
+In a future heterogeneous training path, we would adapt the five-dimension
+`ClientScorer` (`fl/scoring.py`) to evaluate compatible shared-space updates.
+The current scorer is wired to the existing same-schema MLP; it does not yet
+score torso-only heterogeneous updates. The design question is:
 
 > A client with a different schema/modality should not be penalized merely
 > because its raw features look dissimilar. Since only the torso is federated,
 > similarity/novelty are measured **on the shared representation**, where a
 > schema-different client's contribution is genuinely comparable.
 
-> **Research thesis.** *Different banks possess different data distributions and
-> potentially different feature spaces. Therefore an update being different from
-> the federation does not mean it is bad. The proposed aggregator distinguishes
-> harmful deviation from useful, complementary knowledge and dynamically weights
-> clients accordingly.*
+> **Working hypothesis.** *Different banks possess different data distributions
+> and potentially different feature spaces, so an update being different from the
+> federation is not by itself evidence that it is harmful. We are testing whether
+> validation-based utility and reliability signals can distinguish damaging updates
+> from useful complementary information and improve aggregation in those settings.*
 
 ### 5.1 Refined contribution-score semantics
 
@@ -147,16 +150,14 @@ now come from the **shared space**. This is the crux of the research angle:
 
 ### 5.2 Complementarity and the canonical reference encoder
 
-Complementarity (fl/scoring.py `_complementarity`) evaluates a client update on a
-**server-side proxy mix** drawn from the held-out test set. In a schema-
-heterogeneous federation, a client's raw `Encoder_k` cannot consume proxy rows
-from a different schema. Resolution: complementarity is scored in the **shared
-space** using a single **canonical/reference encoder** over the union (the "common"
-schema) — the same encoder used for the test/proxy mix. This keeps complementarity
-comparable across clients whose raw schemas differ. The explicit design decision:
-**similarity ≠ usefulness**, and complementarity measures *marginal information a
-client brings that the federation does not already possess* under a canonical
-view, never raw-feature similarity.
+The current `ClientScorer` (`fl/scoring.py`) measures complementarity on the
+provided validation reference, not on the held-out test set. A future
+schema-heterogeneous path still needs a canonical reference representation: a
+client's private encoder cannot directly process rows expressed in another
+client's schema. One candidate is a shared reference encoder over agreed common
+features. This is a design option that needs implementation and evaluation.
+In either design, we intend to measure marginal utility rather than treating
+parameter distance alone as evidence of usefulness.
 
 ### 5.3 Design principle: don't equate "novel" with "large update"
 
@@ -175,13 +176,13 @@ from *similarity* so heterogeneous-but-valid clients are not down-weighted.
 
 ---
 
-## 6. Research positioning & prioritized directions
+## 6. Research Position and Questions
 
 Heterogeneous FL, data valuation, trustworthy aggregation, and privacy are already
-established research areas — **not** claims of novelty by themselves. Our novelty
-lives in the *specific interaction between feature heterogeneity and useful client
-contribution*. We therefore prioritize five directions (each with a research
-question), and avoid "adding more FL components" as a contribution by itself.
+established research areas. We are examining how feature heterogeneity interacts
+with client utility and whether validation-based contribution signals add value
+in that setting. We organize the work around five questions; results and prior
+work comparisons will determine how we describe the research contribution.
 
 ### ① Feature / schema heterogeneity
 - Encoder + shared-torso architecture (§2).
@@ -216,11 +217,11 @@ question), and avoid "adding more FL components" as a contribution by itself.
 - Answer: does complementarity help? does novelty help? does temporal history help?
   are any components redundant? does the answer change under feature heterogeneity?
 
-### Coherent story (defensible contribution)
+### Working Research Question
 > Different banks possess different data distributions and potentially different
 > feature spaces, so an update being different from the federation does not mean it
-> is bad. The proposed contribution-aware aggregator distinguishes *harmful
-> deviation* from *useful, complementary knowledge* and dynamically weights clients
+> is harmful. We are testing whether contribution-aware aggregation can separate
+> harmful updates from useful complementary information and weight clients
 > accordingly.
 
 ---
@@ -268,11 +269,11 @@ information. Investigate secure aggregation / differential privacy / noisy
 contribution scores and whether the *contribution ranking* survives added noise.
 
 ---
-## 8. Stage-2 schema design (implement next)
+## 8. Current Schema Prototype and Integration Plan
 
-We build realistic heterogeneous **column subsets from real data** — we do *not*
-fabricate fake modalities. From the existing processed train set we construct
-`N` banks, each a different (possibly overlapping) subset of the 30 features:
+Our current schema helpers create heterogeneous **column subsets from real
+data** rather than fabricated modalities. The examples below illustrate the
+intended setup; the integrated training loop is still being developed:
 
 ```
 Bank A: [Time, V1..V10]                (10 features)
@@ -283,82 +284,60 @@ Bank C: [Time, V15..V28, Amount]       (16 features)
 Each bank keeps the `Class` column. Every column subset is a genuine
 "different transaction columns" scenario from the same real distribution.
 
-### 6.1 `fl/data_heg.py` heterogeneity layer (new)
+### 8.1 `fl/data_heg.py` Schema Helpers (Implemented)
 
-Pure, testable pandas/numpy functions:
+The module currently provides these pandas/NumPy helpers:
 
-- `inspect_source(path)` → per-bank schema report: column names/order, dtypes,
-  row count, per-column missing %, min/max/mean/std, fraud rate, detected label
-  column.
-- `compare_schemas(reports)` → cross-bank diff: shared columns, only-in-k
-  columns, dtype conflicts, missing-data flags.
-- `compute_common_features(reports, k=5)` → **global top-k correlation subset**
-  (correlation of each feature with `Class`, pooled/median across banks) used to
-  (a) explain which features drive fraud globally and (b) drive the canonical
-  reference encoder for complementarity. Configurable `--k`.
-- `align_source(csv_path, schema)` → returns a canonical `FraudDataset`-compatible
-  loader / DataFrame with exactly the client's *own* columns, dtypes cast,
-  missing values filled — so each `Encoder_k` sees a consistent tensor of its own
-  width.
+- `inspect_source(path)` reports columns, dtypes, missing fractions, row count,
+  fraud rate, and feature/label correlations.
+- `compare_schemas(reports)` returns shared columns, the union of columns, and
+  features unique to each schema.
+- `common_features(reports, k=5)` ranks shared columns by median absolute
+  label-correlation. It is an exploratory helper, not a causal feature selector.
+- `make_schema_shards(train_path, output_dir, schemas, seed)` writes seeded
+  shards using real feature subsets and retains the original labels.
 
-The heterogeneity **report** (per-bank correlation top features, shared vs
-union coverage, dtype/modality mismatches) is logged by the orchestrator and
-written to `results/`.
+These helpers are not yet called by `FedClient` or the experiment runner.
 
-### 6.2 Orchestrator `fl/train_federated.py` (new)
+### 8.2 Planned Training Integration
 
-- CLI: `--stage 2`, `--k`, `--aggregation`, `--rounds`, `--local-epochs`, `--lr`,
-  `--batch-size`, `--proxy-size`, `--banks-dir`, `--test`, `--results-dir`,
-  `--seed`, `--device`, `--tag`.
-- Inspect + align each bank → emit heterogeneity report.
-- Auto-wire each bank's `Encoder_k` (width = its own feature count) + shared torso.
-- Run FL (torso-only aggregation + shared-space scoring).
-- **Validation gate:** evaluate `checkpoints/best_model.pth` on `test.csv` for the
-  centralized reference ROC-AUC/F1; report whether the federated torso
-  meets/exceeds it.
+An end-to-end runner still needs to load each schema, instantiate and preserve
+each client's local encoder, align the shared representation, aggregate torso
+parameters only, and evaluate through a compatible reference encoder. We have
+not implemented `fl/train_federated.py` or this protocol yet.
 
----
+## 9. Integration Work Remaining
 
-## 9. Required code changes (small, backward-compatible)
+| Area | Current state | Remaining work |
+|------|---------------|----------------|
+| `models/heterogeneous.py` | Local encoder, shared torso, composition, and torso-state helpers exist. | Integrate them into local training and define representation alignment. |
+| `fl/data_heg.py` | Schema inspection, comparison, feature ranking, and shard writing exist. | Connect schema metadata and loaders to clients and experiments. |
+| `fl/client.py` / `fl/server.py` | Both use the shared-schema MLP. | Keep encoders local and distribute/aggregate only aligned shared parameters. |
+| `fl/scoring.py` | Scores same-schema MLP updates on the validation reference. | Define and validate scorer inputs for aligned heterogeneous updates. |
+| `fl/aggregation.py` | Aggregates matching state dictionaries. | Add a clearly specified shared-key contract if the heterogeneous runner needs one. |
+| `fl/train_federated.py` | Not present. | Build the experiment runner only after data, alignment, and evaluation contracts are settled. |
+| `fl/robustness.py` | Scale, sign-flip, and norm-matched noise hooks exist. | Evaluate stronger targeted attacks. |
 
-| File | Change | Backward compatible |
-|------|--------|---------------------|
-| `models/fraud_model.py` | Split model into `encoder(feature_dim→64)` + shared `torso(64→32→1)`; expose shared parameter keys | Yes (equal widths reduce to today) |
-| `fl/client.py` | `FedClient` accepts `feature_columns`/`schema`; builds its own `Encoder_k`; returns **only torso** state_dict + metrics | Yes (default = full model) |
-| `fl/server.py` | Aggregation/scoring over a `federated_keys` set (torso keys only); keep `use_proxy_mix`; canonical reference encoder for complementarity + marginal-utility evaluation | Yes (default = all keys) |
-| `fl/aggregation.py` | `weighted_average`/strategies operate on the federated key set | Yes |
-| `fl/scoring.py` | Quality → rare-fraud-aware (`F1_fraud/Recall_fraud/PR-AUC`); trust → **reliability against a robust reference**; novelty → **useful marginal utility**; complementarity → **cross-schema marginal information**; temporal → **accumulated contribution** | Yes |
-| `fl/baselines.py` | **New**: FedProx / SCAFFOLD / FedNova adapters for the same-schema comparison (§7.1) | n/a |
-| `fl/robustness.py` | **New**: random / scaled / sign-flipped / targeted-poisoning attack wrappers (§7.5) | n/a |
-| `fl/data_heg.py` | **New**: inspection, comparison, common top-k correlation, alignment | n/a |
-| `fl/train_federated.py` | **New**: orchestrator (Stage-1 and Stage-2 paths, drift simulation, attack injection) | n/a |
-
-The single-schema path (all banks 30 features) is kept bit-identical so existing
-results/experiments remain valid.
----
 
 ## 10. Staged roadmap
 
 | Stage | Heterogeneity | Scope | Status |
 |-------|---------------|-------|--------|
 | 1 | Same schema, diff distributions | Dirichlet split — already works | ✅ existing |
-| 2 | Different schemas, same task | Encoder/torso split + `data_heg.py` + heterogeneous shards + torso-only aggregation | ⏳ design approved, to implement |
-| 3 | Different modalities, same task | Add per-modality `Encoder_k` via the same interface (graph/sequence/CNN) | 📋 interface hook only — no fabricated data |
+| 2 | Different schemas, same task | Schema helpers and encoder/torso prototypes exist; training and alignment are not integrated | In progress |
+| 3 | Different modalities, same task | Per-modality encoders using the shared interface | Future exploration |
 
-Per the project's own guidance, Stage 3 is deliberately **not** demonstrated with
-fake image/graph/text banks purely to claim heterogeneity. A modality becomes
-supported by supplying one additional `Encoder_k`; the federation math and the
-shared torso do not change. If a demonstrator is ever wanted, it is a separate,
-opt-in experiment.
+We have not evaluated different modalities. Supporting one would require a
+modality-specific encoder and a validated shared representation; it would be a
+separate experiment rather than a consequence of the current prototype.
 
 ---
 
 ## 11. Risks, decisions, and open questions
 
-- **Aggregation touches report-locked Phase 1 core.** Made deliberate and
-  backward-compatible; the change is a `federated_keys` set (torso keys), not new
-  aggregation math. The contribution scorer already consumes whatever keys it is
-  given.
+- **Aggregation needs an explicit shared-key contract** if we integrate the
+  torso prototype. The current aggregators consume matching full state
+  dictionaries.
 - **Complementarity needs a canonical reference encoder** for the proxy mix when
   schemas differ (see §5.2). We default it to the common top-k encoder; `--k`
   controls it.
@@ -366,19 +345,19 @@ opt-in experiment.
   novelty + cross-schema complementarity). Kept tractable by fixing a bounded
   reference set; the cost is offset by the communication savings of torso-only
   exchange (§7.6).
-- **Data privacy preserved:** only torso weights + local metrics travel; raw
-  schemas/encoders stay local. Client-derived metrics (e.g., fraud recall) can
-  still leak distribution info — DP / noisy-score axis is in §7.7.
+- **Privacy remains a design constraint:** a future protocol should keep raw
+  schemas and local encoders local. The current simulator has no formal privacy
+  mechanism, and client-derived metrics can reveal distribution information.
 - **Validation gate is a report, not a hard stop** — a weak federated baseline is
   reported, not silently blocked, so results are always visible.
-- **`requirment.txt`** already lists torch/numpy/pandas/tqdm; no new deps for the
-  core. FedProx/SCAFFOLD/FedNova baselines use only the existing torch/sklearn.
+- **Dependencies:** the current prototype uses existing project dependencies;
+  new integration work may require additional validation or tooling.
 - **Open:** whether complementarity should later add an explicit
   "cross-schema usefulness" term beyond the canonical encoder (§5.2). Decide
   after Stage-2 numbers.
-- **Open:** aggressive claim-avoidance — novelty is asserted only for the
-  *feature-heterogeneity × useful-contribution interaction*, never for the
-  individual components (which literature already covers).
+- **Research positioning:** we are reviewing related work on feature
+  heterogeneity, client utility, and reliability before deciding how to position
+  any contribution.
 
 ---
 
@@ -388,11 +367,11 @@ opt-in experiment.
   feature spaces are a distinct setting from ordinary horizontal FL.
   - *Heterogeneous Federated Learning: State-of-the-art and Research Challenges* (arXiv:2307.10616)
   - *A Survey on Heterogeneous Federated Learning* (arXiv:2210.04505)
-- **Data valuation / contribution in FL:** established area; our contribution is
-  specifically *cross-schema marginal utility*, not "we score clients."
+- **Data valuation / contribution in FL:** established research area. We are
+  comparing our utility definitions with existing methods.
   - *Data valuation in federated learning* (Elsevier, B9780443190377000247)
-- **Trust-aware financial FL:** our novelty is *reliability decoupled from
-  similarity*, which matters specifically for heterogeneous banks.
+- **Trust-aware financial FL:** related work informs how we evaluate update
+  reliability separately from update direction.
   - *A Federated Approach to Scalable and Trustworthy Financial Fraud Detection* (Wiley, 2025)
 - **Evolving / adaptive fraud FL:** ties to our concept-drift and rare-fraud axes.
   - *Beyond siloed aggregation: adaptive federated RL with multi-level knowledge distillation against evolving financial fraud* (Elsevier, 2025)

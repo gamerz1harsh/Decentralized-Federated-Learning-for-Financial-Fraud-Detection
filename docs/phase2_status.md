@@ -1,22 +1,24 @@
 # Phase 2 Status and Initial Results
 
-Updated 2026-10-02. Phase 2 is active and partially implemented; it is not
-complete and current measurements do not establish that contribution-aware
-aggregation is better overall.
+Updated 2026-10-02. We are continuing Phase 2 evaluation. Results vary by
+scenario, and our current measurements do not show a consistent overall gain
+for contribution-aware aggregation.
 
 ## Research setup
 
-- Single-machine federated simulation; CUDA is available. No multi-machine work.
+- We run a single-machine federated simulation; CUDA is available. We have not
+  evaluated multi-machine deployment.
 - Per-round selection/scoring uses a separate validation reference. Test data is
   evaluated once at the final round and is not used for scorer weights.
 - Main ranking metrics are PR-AUC and ROC-AUC. Fraud is rare, so report both.
 - Results below use three seeds and a fixed held-out test set with 47 frauds.
-  The t intervals over seeds are highly uncertain with n=3; treat these as
+  The t intervals over seeds are highly uncertain with n=3; we treat these as
   exploratory comparisons, not confirmatory inference.
 - The same held-out test set has been inspected repeatedly across these screens.
   The intervals below quantify variation over training/partition seeds only;
   they do not account for test-sample uncertainty or repeated-comparison bias.
-  Do not present them as confirmatory p-values or final generalization claims.
+  We use them to describe seed variation, not as confirmatory p-values or final
+  generalization estimates.
 
 ## Completed implementation
 
@@ -31,7 +33,7 @@ aggregation is better overall.
   output, and coordinate influence accounting for robust coordinate methods.
 - Streamlit dashboard at `dashboard/app.py`; launch from repo root with
   `.venv\Scripts\streamlit.exe run dashboard/app.py`.
-- Seven unit tests pass, as does `python -m fl.smoke_test`.
+- Eight unit tests pass, as does `python -m fl.smoke_test`.
 
 ## Initial comparisons
 
@@ -91,26 +93,23 @@ had slightly higher mean PR-AUC and lower ROC-AUC. Mean attacker-0 aggregation
 weight was about 0.1555 for contribution-aware versus 0.1686 for FedAvg, a
 modest reduction rather than exclusion.
 
-## Interpretation and novelty guardrails
+## How We Interpret the Results
 
-The evidence supports continuing the investigation, not claiming superiority.
-The current quality/trust/novelty/complementarity concepts have adjacent prior
-work: leave-one-out utility, update reliability, and class-specific contribution
-are not individually sufficient novelty claims. A potentially narrower research
-question is whether validation-calibrated recovery of hard fraud cases improves
-PR-AUC at a fixed false-positive budget under heterogeneous clients and targeted
-poisoning. That remains a hypothesis and needs explicit baselines and ablations.
+Our results so far are mixed and do not show a consistent performance advantage
+over FedAvg. Related work already studies update reliability, client valuation,
+and class-specific utility. We are comparing those approaches and testing
+whether validation-based utility on difficult fraud cases adds measurable value
+under feature heterogeneity and targeted attacks.
 
 ## Still needed for Phase 2
 
-- Bootstrap implementation audit: one intermediate edit accidentally sampled
-  stratified classes without replacement. This only permuted observations and
+- Bootstrap audit: we found an intermediate implementation that sampled
+  stratified classes without replacement. That only permuted observations and
   did not estimate uncertainty. The five-round feature, temporal, scale, noise,
   and noisy-label scorer runs, and the first quantity follow-up, used that
-  temporary permutation variant. Their fixed-baseline results remain valid,
-  but contribution-aware results/ablations are **provisional** and must not be
-  used as final evidence. The original 20-round clean and 10-round sign-flip
-  matrices used the correct with-replacement bootstrap.
+  temporary variant. Their fixed-baseline results remain valid; scorer results
+  are provisional. The original 20-round clean and 10-round sign-flip matrices
+  used the correct with-replacement bootstrap.
 - Corrected 10-round quantity-skew rerun with class-stratified sampling *with*
   replacement: contribution-aware averaged 0.6835 PR-AUC vs. FedAvg 0.7071.
   Its paired deltas were negative on all four seeds; mean -0.0236, 95% seed-based
@@ -127,34 +126,35 @@ poisoning. That remains a hypothesis and needs explicit baselines and ablations.
   the paired delta was +0.0051 (95% seed-based t interval [-0.0076, +0.0178]).
   All four paired deltas were positive, but three were only +0.0006 to +0.0015
   and seed 45 contributed +0.0170. Full scoring was effectively tied with
-  quality plus novelty and complementarity (mean delta +0.0002). The result
-  does not establish repeatable incremental value from the full utility profile.
+  quality plus novelty and complementarity (mean delta +0.0002). We have not yet
+  observed a repeatable incremental gain from the full utility profile.
   Artifact: `results/phase2_feature_skew_bootstrap/`.
   Coordinate median remained highly variable across seeds.
 - Provisional temporal screen: all methods were effectively tied around PR-AUC 0.715-0.716.
   This is client-local chronological partitioning, not a future-time held-out
   test, so it does not establish concept-drift performance.
-- Provisional five-round Gaussian-noise replacement and 30% label flips in one client were
-  screened across three/four seeds. Contribution-aware mean paired deltas vs.
-  FedAvg were +0.0209 and +0.0279 respectively, with both seed-based intervals
-  including zero. Noise attack is norm-matched isotropic replacement and should
-  not be described as a strong targeted adversary.
+- Provisional five-round Gaussian-noise replacement and 30% label flips in one
+  client were screened across three/four seeds. Contribution-aware mean paired
+  deltas vs. FedAvg were +0.0209 and +0.0279 respectively, with both seed-based
+  intervals including zero. The noise attack is norm-matched isotropic
+  replacement, rather than a targeted adversary.
 - These short screens use 5 rounds, 8 or 12 scorer bootstrap draws, and usually
-  3-4 seeds. The 10-round quantity follow-up also uses 8 draws. Do not compare
-  their absolute scores directly to the earlier 20-round, 80-draw clean matrix.
+  3-4 seeds. The 10-round quantity follow-up also uses 8 draws. Because their
+  rounds, bootstrap counts, and seeds differ from the earlier 20-round,
+  80-draw clean matrix, their absolute scores are not directly comparable.
 
 - Repeat promising and negative scenarios at 20 rounds, more seeds, and a
   prespecified held-out evaluation; broaden attacks to adaptive/targeted cases.
-- Add a true chronological train/validation/test split before claiming temporal
+- Add a chronological train/validation/test split to evaluate temporal
   generalization, then compare scorer profiles and robust baselines.
 - Increase seed count and report paired confidence intervals, attacker influence,
   calibration/threshold behavior, and PR-AUC alongside ROC-AUC.
-- Review prior work and narrow the novelty claim before presenting it.
-- Rework trust to identify manipulation without equating legitimate
-  heterogeneity with attack; validate it on unseen seeds and stronger targeted
-  attacks. Current evidence shows this remains unresolved.
+- Continue comparing our scoring design with related prior work.
+- Improve trust calibration to identify manipulation without equating
+  legitimate heterogeneity with attack; evaluate it on unseen seeds and stronger
+  targeted attacks. Current evidence shows this remains unresolved.
 - Heterogeneous encoder/shared-torso components exist, but Phase 3 training is
-  not wired. Do not average independent private encoders: resolve latent-space
-  alignment first.
+  not wired. Independent private encoders need latent-space alignment before
+  their shared torso updates can be meaningfully aggregated.
 
 See `DEV_LOG.md` for implementation history and the next-work checklist.

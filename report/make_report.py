@@ -48,7 +48,6 @@ def add_caption(text):
     run.font.color.rgb = RGBColor(0x44, 0x44, 0x44)
     return p
 
-
 def add_figure(path, caption, width=6.0):
     if os.path.exists(path):
         doc.add_picture(path, width=Inches(width))
@@ -115,36 +114,29 @@ add_page_break()
 doc.add_heading("Abstract", level=1)
 
 doc.add_paragraph(
-    "Credit card fraud remains one of the most persistent and financially damaging problems "
-    "in the banking sector. In recent years, federated learning has emerged as a promising "
-    "approach that allows multiple financial institutions to train a shared fraud detection "
-    "model collaboratively without exchanging raw transaction data. This preserves customer "
-    "privacy while still benefiting from the collective knowledge of all participants. "
-    "However, in a real-world federation, banks are not equal: they differ in data quality, "
-    "data distributions, fraud patterns, and even in their reliability as participants."
+    "Credit-card fraud is difficult to detect because positive cases are rare and patterns "
+    "can differ across institutions. We use a local federated-learning simulation to study "
+    "how clients trained on separate shards can contribute to a shared fraud model. "
+    "Model updates and summary metrics still carry information, so our setup does not "
+    "provide a formal privacy guarantee."
 )
 
 doc.add_paragraph(
-    "This report presents a federated learning framework for credit card fraud detection in "
-    "which each participating bank submits its locally trained model weights to a central "
-    "server, and the server evaluates these submissions along multiple scoring dimensions — "
-    "including quality, trust, novelty, complementarity, and temporal trend — before "
-    "aggregating them into a global model. Instead of treating every bank uniformly (as in "
-    "standard FedAvg) or weighting purely by dataset size, the proposed approach assigns "
-    "each client a contribution score that reflects how valuable its update actually is to "
-    "the federation. The scoring pipeline is designed to be privacy-preserving: the server "
-    "never sees raw data, only model weights and computed metrics."
+    "We implemented a same-schema federated fraud-detection simulator with FedAvg, "
+    "performance and robust baselines, and an experimental contribution-aware aggregator. "
+    "The scorer combines local validation quality, update-scale reliability, hard-fraud "
+    "utility, leave-one-out validation PR-AUC complementarity, and historical utility. "
+    "Our current comparisons are mixed: contribution-aware scoring helps in some screens "
+    "but is not consistently better than FedAvg or robust aggregation. We report the setup "
+    "and its limitations alongside the results."
 )
 
 doc.add_paragraph(
-    "The report begins with a background discussion of federated learning and fraud "
-    "detection, followed by a review of recent related work in adaptive aggregation, "
-    "trust-aware federated learning, and fraud-specific systems. The proposed system "
-    "architecture and methodology are then described in detail, together with the data "
-    "preparation and experimental plan. Preliminary work carried out so far — including "
-    "data preprocessing, non-IID partitioning into four bank shards, and a centralized "
-    "training baseline — is presented. Finally, future research directions, possible "
-    "extensions, and the expected contributions of the work are discussed."
+    "We review related work in adaptive aggregation, trust-aware federated learning, and "
+    "fraud detection, then describe our implemented same-schema training path, data "
+    "preparation, baselines, and experiments. We also outline the heterogeneous encoder/torso "
+    "prototype and the integration work that remains. Our results are exploratory because "
+    "the number of seeds is small and the same held-out test set has been reused."
 )
 
 add_page_break()
@@ -226,7 +218,7 @@ toc_items = [
     ("5.6 Current Limitations", 2),
     ("Chapter 6 — Future Research Direction", 1),
     ("6.1 Possible Extensions", 2),
-    ("6.2 Potential Novelty", 2),
+    ("6.2 Research Position and Open Questions", 2),
     ("6.3 Research Questions", 2),
     ("6.4 Future Experiments", 2),
     ("6.5 Expected Contributions", 2),
@@ -338,21 +330,20 @@ doc.add_paragraph(
 )
 
 doc.add_paragraph(
-    "Federated learning (FL) offers an alternative paradigm. In FL, multiple participants "
-    "collaboratively train a shared model without ever sharing their raw data. Each "
-    "participant trains a local model on its own private data and only exchanges model "
-    "updates — typically weight vectors — with a central server. The server aggregates "
-    "these updates to produce a global model, which is then redistributed for the next "
-    "round of local training [2]. This approach respects data privacy while still allowing "
-    "the federation to learn from diverse data sources."
+    "We study federated learning (FL) as a way for participants to train a shared model "
+    "while keeping training shards separate in the learning loop. In our local simulator, "
+    "clients train on their assigned CSV shards and send model updates and summary metrics "
+    "to a central server. This setup models data locality; it does not implement secure "
+    "aggregation, encryption, or differential privacy, and therefore does not provide a "
+    "formal privacy guarantee [2]."
 )
 
 doc.add_paragraph(
-    "In the context of fraud detection, FL is particularly attractive because fraud "
-    "patterns are highly localized: a bank operating in one region may encounter fraud "
-    "schemes that another region has never seen. By pooling model knowledge rather than "
-    "raw data, federated fraud detection can capture a broader picture of fraudulent "
-    "behaviour while keeping each bank's transaction records private."
+    "Fraud patterns can differ across institutions, which motivates our study of "
+    "collaborative model training under heterogeneous client data. In this local "
+    "simulation, shards are kept separate during client training, but the server process "
+    "can access reference and test files. We therefore treat data locality as a property "
+    "of the experimental workflow, not as a privacy or security guarantee."
 )
 
 doc.add_heading("1.2 Problem Statement", level=2)
@@ -369,13 +360,10 @@ doc.add_paragraph(
 )
 
 doc.add_paragraph(
-    "The problem addressed in this project is: how should a central server decide how much "
-    "weight to give to each client's model update in a federated fraud detection system? "
-    "Simple heuristics such as weighting by dataset size are inadequate because they do "
-    "not account for the quality, trustworthiness, novelty, or complementarity of the "
-    "knowledge that each client contributes. A more principled approach is needed — one "
-    "that scores clients along multiple dimensions and uses those scores to guide "
-    "aggregation."
+    "We study how a server should combine client updates when banks differ in data volume, "
+    "fraud prevalence, and fraud patterns. FedAvg, single-signal weighting, and robust "
+    "coordinate methods provide distinct baselines. Our experiments ask whether "
+    "validation-based contribution signals improve on those methods in specific settings."
 )
 
 doc.add_heading("1.3 Motivation", level=2)
@@ -390,55 +378,45 @@ doc.add_paragraph(
 )
 
 doc.add_paragraph(
-    "These characteristics make federated learning an appealing solution, but they also "
-    "mean that a naive FL implementation may perform poorly. Banks with very different "
-    "fraud profiles contribute very differently to the shared model. A bank that has "
-    "recently experienced a novel fraud scheme has uniquely valuable knowledge that other "
-    "banks would benefit from. Conversely, a bank whose update is largely redundant — "
-    "because its fraud patterns are already well represented in the global model — "
-    "contributes little new information. The motivation for this project is to build a "
-    "federated system that can recognize these differences and act on them."
+    "These characteristics motivate our evaluation of client weighting under "
+    "heterogeneous fraud profiles. We test whether validation quality, update reliability, "
+    "and marginal utility provide useful signals beyond sample-count weighting, while also "
+    "checking whether those signals remain helpful under different partition and attack "
+    "scenarios."
 )
 
 doc.add_heading("1.4 Need for the Proposed System", level=2)
 
 doc.add_paragraph(
-    "Existing federated learning frameworks for fraud detection, as surveyed in Chapter 2, "
-    "generally fall into one of two camps. The first camp uses simple aggregation schemes "
-    "such as FedAvg, possibly with weighting by local accuracy or loss. The second camp "
-    "focuses on security — adding encryption, differential privacy, or malicious-client "
-    "detection. Very few systems attempt to measure the actual contribution of each "
-    "client's update in a multi-dimensional way, and fewer still track how contributions "
-    "change over time."
+    "The studies covered in Chapter 2 explore different combinations of aggregation, "
+    "client reliability, privacy, and non-IID learning. We use those approaches to frame "
+    "our experiments on validation-based client utility and scorer ablations; our review "
+    "does not attempt to represent every system in the field."
 )
 
 doc.add_paragraph(
-    "There is a clear need for a system that: (1) evaluates clients along multiple scoring "
-    "dimensions simultaneously; (2) uses these scores to weight aggregation in a "
-    "principled way; and (3) adapts dynamically as the fraud landscape and client "
-    "behaviour evolve. This project aims to address that need."
+    "We test whether validation quality, update reliability, and leave-one-out utility "
+    "signals improve aggregation across non-IID scenarios, and whether the effect changes "
+    "under attack or feature heterogeneity."
 )
 
 doc.add_heading("1.5 Aim of the Project", level=2)
 
 doc.add_paragraph(
-    "The aim of this project is to design and implement a federated learning framework for "
-    "credit card fraud detection in which client model updates are scored along multiple "
-    "dimensions — quality, trust, novelty, complementarity, and temporal trend — and "
-    "these scores are used to perform contribution-aware aggregation. The project also "
-    "aims to evaluate the proposed framework against standard baselines such as FedAvg "
-    "under non-IID data distributions."
+    "Our aim is to evaluate contribution-aware aggregation for credit-card fraud detection "
+    "against FedAvg, performance-weighted, and robust baselines under non-IID client data. "
+    "We use scorer ablations to measure whether the implemented signals add repeatable "
+    "value."
 )
 
 doc.add_heading("1.6 Objectives", level=2)
 
 objectives = [
-    "To preprocess the credit card fraud dataset and partition it into non-IID client shards to simulate multiple banks.",
-    "To implement a federated learning baseline (FedAvg) for fraud detection using an MLP model.",
-    "To design a multi-dimensional client scoring pipeline covering quality, trust, novelty, complementarity, and temporal trend.",
-    "To implement contribution-aware aggregation that uses the computed scores to weight client updates.",
-    "To evaluate the proposed method against standard baselines using metrics such as ROC-AUC and F1-score.",
-    "To document the system architecture, methodology, and results in a structured project report.",
+    "We preprocess the credit-card data and build seeded non-IID client shards.",
+    "We train a shared-schema MLP with FedAvg and alternative aggregation baselines.",
+    "We implement and ablate validation quality, update reliability, hard-fraud utility, complementarity, and temporal utility signals.",
+    "We compare methods using paired seeds, PR-AUC, ROC-AUC, and thresholded metrics.",
+    "We document the implementation, experimental results, and remaining limitations.",
 ]
 for i, obj in enumerate(objectives, 1):
     p = doc.add_paragraph(f"Objective {i}: {obj}")
@@ -447,31 +425,29 @@ for i, obj in enumerate(objectives, 1):
 doc.add_heading("1.7 Scope of the Project", level=2)
 
 doc.add_paragraph(
-    "The scope of this project includes: the use of a publicly available credit card fraud "
-    "dataset; simulation of four to eight client banks using Dirichlet-based non-IID "
-    "partitioning; an MLP-based fraud detection model; a central server implementing "
-    "FedAvg and contribution-aware aggregation; and an evaluation framework comparing "
-    "these approaches. The project does not currently implement full cryptographic secure "
-    "aggregation or differential privacy mechanisms, although these are discussed in "
-    "future scope. Real-time deployment is outside the scope; all experiments are "
-    "simulated locally."
+    "Our current scope is a single-machine study using the public credit-card fraud "
+    "dataset, a same-schema MLP, deterministic non-IID and stress-scenario partitions, "
+    "and comparisons among FedAvg, weighted, robust, and contribution-aware aggregation. "
+    "We have not implemented secure aggregation, differential privacy, or real-world "
+    "multi-institution deployment. Heterogeneous encoder/torso training remains a "
+    "prototype outside the current experiment loop."
 )
 
 doc.add_heading("1.8 Expected Outcomes", level=2)
 
 doc.add_paragraph(
-    "The expected outcomes of this project are: (1) a working federated learning baseline "
-    "for fraud detection; (2) a multi-dimensional client scoring pipeline; (3) a "
-    "contribution-aware aggregation method that outperforms FedAvg under non-IID "
-    "conditions; (4) an experimental evaluation with results and analysis; and (5) a "
-    "comprehensive project report documenting the entire process."
+    "Our current outcomes are: (1) a working same-schema federated learning simulator; "
+    "(2) a multi-dimensional client-scoring implementation; (3) paired comparisons against "
+    "FedAvg and robust baselines across several scenarios; and (4) a documented set of "
+    "limitations and follow-up experiments. Current results do not show consistent "
+    "improvement over FedAvg."
 )
 
 add_figure(
     os.path.join(FIGURES_DIR, "fig1_system_architecture.png"),
-    "Figure 1: High-level system architecture. Each bank trains locally on private data; "
-    "only model weights are uploaded to the central server, which scores them and "
-    "aggregates a global model.",
+    "Figure 1: High-level simulator architecture. Each client trains from a separate "
+    "shard and returns an update plus validation metrics for server-side scoring and "
+    "aggregation. The drawing does not imply a formal privacy mechanism.",
     width=6.2,
 )
 
@@ -606,14 +582,12 @@ add_caption("Table 1: Comparison of existing approaches to federated fraud detec
 doc.add_heading("2.5 Limitations of Existing Work", level=2)
 
 doc.add_paragraph(
-    "A consistent pattern emerges from the reviewed literature. Most adaptive federated "
-    "learning methods for fraud detection weight clients by a single local performance "
-    "metric, such as accuracy or loss, or cluster clients by coarse data-similarity "
-    "features. Very few explicitly measure the cross-client complementarity of knowledge "
-    "— that is, how much one client's update improves the performance of other clients. "
-    "HiFraud [4] clusters institutions by fraud-pattern similarity, but does not compute "
-    "how a client's model improves others. No reviewed work formally tracks how a "
-    "client's contribution utility evolves over time."
+    "Among the sources we reviewed, approaches differ in how they weight clients, model "
+    "reliability, and account for evolving contributions. Some use local accuracy or loss; "
+    "others cluster clients by data similarity or focus on security. This comparison "
+    "motivates our ablations of local quality, update reliability, leave-one-out utility, "
+    "and temporal signals. It is limited to the papers cited here and is not an exhaustive "
+    "survey of the field."
 )
 
 doc.add_paragraph(
@@ -628,31 +602,23 @@ doc.add_paragraph(
 doc.add_heading("2.6 Identified Research Gap", level=2)
 
 doc.add_paragraph(
-    "Based on the review, the following gaps are identified. First, knowledge "
-    "complementarity is not formalized in a way that is actionable during aggregation. "
-    "Even when a system clusters clients by similarity, it does not quantify how one "
-    "client's update improves another's performance. Second, aggregation weights are "
-    "typically computed from a single metric. The opportunity to combine quality, trust, "
-    "novelty, and complementarity into a multi-dimensional contribution score has not "
-    "been thoroughly explored in the fraud domain. Third, the temporal dimension — "
-    "tracking how a client's contribution value changes over rounds, identifying "
-    "improving or deteriorating clients — is largely absent from the reviewed works. "
-    "Fourth, communication and privacy decisions are not connected to contribution "
-    "value: all updates are treated equally in terms of transmission, regardless of how "
-    "valuable they are."
+    "In the sources we reviewed, federated fraud systems address client weighting, "
+    "reliability, privacy, and non-IID data in different ways. This motivates several "
+    "questions for our experiments: whether leave-one-out utility signals improve "
+    "aggregation; whether local quality, update reliability, and hard-fraud utility add "
+    "distinct information; and whether client value changes across rounds. Our review is "
+    "a starting point, not an exhaustive claim about all prior work."
 )
 
 doc.add_heading("2.7 Research Direction", level=2)
 
 doc.add_paragraph(
-    "The research direction taken in this project is to design a federated learning "
-    "framework in which each client's submitted model weights are evaluated along "
-    "multiple dimensions — quality, trust, novelty, complementarity, and temporal trend "
-    "— and these evaluations are combined into a contribution score that directly "
-    "influences aggregation. This direction builds on the strengths of the reviewed "
-    "works while addressing their most significant limitations. It is deliberately "
-    "grounded in the fraud domain, where client heterogeneity and evolving fraud "
-    "patterns make multi-dimensional contribution scoring particularly relevant."
+    "We implemented a same-schema framework that scores each update using validation "
+    "quality, update-scale reliability, hard-fraud utility, validation PR-AUC "
+    "complementarity, and historical utility. Our current research direction is to test "
+    "which signals help under specific client heterogeneity and attack scenarios, and how "
+    "those results compare with existing methods. The heterogeneous encoder/torso path "
+    "remains a separate prototype."
 )
 
 add_page_break()
@@ -666,46 +632,40 @@ doc.add_heading("Chapter 3 — Proposed Approach", level=1)
 doc.add_heading("3.1 Proposed System", level=2)
 
 doc.add_paragraph(
-    "The proposed system is a contribution-aware federated learning framework for credit "
-    "card fraud detection. The system comprises a central aggregation server and a set of "
-    "participating banks (clients). Each bank owns a private, non-overlapping partition "
-    "of transaction data and trains a local fraud detection model. Only model weights are "
-    "shared with the central server. The server evaluates each client's submission along "
-    "multiple scoring dimensions and computes a contribution score for that client. These "
-    "scores are then used as weights in the aggregation step, producing a global model "
-    "that reflects the collective, quality-weighted knowledge of the federation."
+    "Our implemented system simulates a central server and several clients, each trained "
+    "from a separate shard of the processed transaction data. Clients return model updates "
+    "and validation metrics to the server. The selected aggregation method updates the "
+    "global model; the contribution-aware option derives client weights from the scorer. "
+    "Because this is a local simulation without secure aggregation or differential privacy, "
+    "we describe data locality rather than a formal privacy guarantee."
 )
 
 doc.add_heading("3.2 System Architecture", level=2)
 
 doc.add_paragraph(
-    "Figure 1 (shown in Chapter 1) illustrates the high-level system architecture. Each "
-    "bank trains a local model on private transaction data. Model weights are uploaded to "
-    "the central server, which contains two core modules: the multi-dimensional scoring "
-    "module and the contribution-aware aggregation module. The scoring module computes "
-    "per-client scores along five dimensions. The aggregation module combines the "
-    "individual updates using the normalized contribution scores as weights. The "
-    "resulting global model is distributed back to the banks for the next training round."
+    "Figure 1 (shown in Chapter 1) summarizes our simulator. Each client trains on its "
+    "assigned shard and returns model updates and validation metrics. The server can "
+    "aggregate with FedAvg, robust methods, or contribution-aware weights, then "
+    "redistributes the global state for the next configured round. This local setup does "
+    "not add secure aggregation or differential privacy."
 )
 
 doc.add_heading("3.3 Overall Workflow", level=2)
 
 add_figure(
     os.path.join(FIGURES_DIR, "fig2_training_workflow.png"),
-    "Figure 2: Workflow of one federated training round. The server distributes the "
-    "global model; clients train locally; weights are uploaded; the server scores each "
-    "client and performs contribution-aware aggregation.",
+    "Figure 2: Workflow of one simulated round. The server distributes the global "
+    "model; clients train locally and return updates with validation metrics; the server "
+    "applies the selected aggregation method.",
     width=6.2,
 )
 
 doc.add_paragraph(
-    "The overall workflow proceeds in rounds. In each round: (1) the server distributes "
-    "the current global model to all clients; (2) each client trains the model on its "
-    "local data for a number of local epochs; (3) the client uploads its updated model "
-    "weights to the server; (4) the server scores each client's update along the five "
-    "dimensions; (5) the server aggregates the updates using the computed contribution "
-    "scores; and (6) the updated global model is distributed again. This loop continues "
-    "for a fixed number of rounds or until convergence."
+    "Our runner executes a configured number of rounds. In each round, the server "
+    "distributes the current global state, each client trains locally and returns an "
+    "update with validation metrics, and the server applies the selected aggregation. "
+    "It records validation metrics during training and, by default, evaluates the held-out "
+    "test set once after the final round."
 )
 
 doc.add_heading("3.4 Major Components / Modules", level=2)
@@ -724,39 +684,33 @@ doc.add_paragraph(
 doc.add_heading("3.5 Proposed Methodology", level=2)
 
 doc.add_paragraph(
-    "The methodology is centered on the multi-dimensional scoring pipeline illustrated "
-    "in Figure 3. For each client i, the server computes:"
+    "Our implemented scorer combines five signals for each client update. These definitions "
+    "describe the current same-schema implementation; the heterogeneous design in "
+    "`docs/heterogeneous_architecture.md` is not yet connected to the training loop."
 )
 
 doc.add_paragraph(
-    "Quality score. The local performance of the client's model, estimated from "
-    "validation loss or accuracy on a held-out portion of the client's own data, "
-    "reported as a metric alongside the weights submission.",
+    "Quality. Local validation PR-AUC, shrunk toward the client cohort when its "
+    "validation set contains few fraud examples.",
     style="List Bullet",
 )
 doc.add_paragraph(
-    "Trust score. A dynamic reputation measure based on the consistency of the client's "
-    "updates across rounds, and the degree to which the client's submitted metrics align "
-    "with what the server can verify indirectly. Trust is updated adaptively: consistent "
-    "clients maintain or increase trust over time.",
+    "Reliability (called trust in the code). A robust update-scale check with "
+    "client-specific history. It is not identity verification or a detector for every attack.",
     style="List Bullet",
 )
 doc.add_paragraph(
-    "Novelty score. A measure of how much new information the client's update carries "
-    "relative to the current global model, estimated by the deviation of the client's "
-    "update from the global model direction.",
+    "Novelty utility. Leave-one-client-out log-probability gain on hard positive "
+    "validation examples; parameter distance alone is not treated as usefulness.",
     style="List Bullet",
 )
 doc.add_paragraph(
-    "Complementarity score. A measure of whether the client's update brings knowledge "
-    "that other clients lack, estimated by evaluating the client's model on a synthetic "
-    "or proxy validation mix representing other clients' distributions.",
+    "Complementarity. Leave-one-client-out PR-AUC gain on the validation reference, "
+    "with a paired, class-stratified bootstrap lower bound.",
     style="List Bullet",
 )
 doc.add_paragraph(
-    "Temporal trend score. A measure of whether the client's contribution is improving, "
-    "stable, or deteriorating over rounds, computed from the recent history of the other "
-    "four scores via an exponential moving average or trend analysis.",
+    "Temporal utility. An exponential moving average of historical marginal utility.",
     style="List Bullet",
 )
 
@@ -768,11 +722,10 @@ add_figure(
 )
 
 doc.add_paragraph(
-    "Once the five scores are computed, they are normalized (for example by min-max or "
-    "softmax scaling) and combined into a single contribution score via a weighted fusion "
-    "or a small learned model. The final aggregation weight for each client is the "
-    "softmax of the combined scores, ensuring the weights sum to one. The global model "
-    "is then computed as a weighted average of client models."
+    "The implementation combines the five configured scores with fixed profile weights, "
+    "then applies a temperature-scaled softmax across clients. These weights drive a "
+    "weighted average of matching model states. The profiles are experimental ablations, "
+    "not learned or proven-optimal weights."
 )
 
 doc.add_heading("3.6 Algorithms / Techniques Considered", level=2)
@@ -960,75 +913,72 @@ doc.add_heading("Chapter 5 — Preliminary Work / Current Progress", level=1)
 doc.add_heading("5.1 Work Completed", level=2)
 
 doc.add_paragraph(
-    "The following components have been completed so far. Data preprocessing has been "
-    "carried out in a Jupyter notebook, producing processed training and test CSV files. "
-    "The non-IID partitioning script has been implemented, generating four bank shards "
-    "with controlled heterogeneity using a Dirichlet distribution (α = 0.1). A fraud "
-    "detection model class (MLP with two hidden layers of 64 and 32 units) has been "
-    "implemented in PyTorch. A centralized training script has been implemented, "
-    "training the model on the combined training set using binary cross-entropy with "
-    "positive-class weighting to handle imbalance. A dataset loader class has been "
-    "implemented to load the processed CSVs into PyTorch datasets and data loaders."
+    "We have implemented train/validation/test preprocessing, seeded scenario "
+    "partitioning, a shared-schema MLP, local client training and validation, a server "
+    "round loop, weighted and robust aggregators, an experimental contribution scorer, "
+    "controlled update attacks, a centralized baseline, a results dashboard, and "
+    "component tests. The heterogeneous encoder/torso and schema helpers are prototypes "
+    "that are not yet integrated with the federated training loop."
 )
 
 doc.add_heading("5.2 Initial Implementation", level=2)
 
 doc.add_paragraph(
-    "The initial implementation consists of the following files: dataset/fraud_dataset.py "
-    "implements the FraudDataset class that reads a processed CSV and returns feature "
-    "tensors and label tensors. models/fraud_model.py implements the FraudDetectionModel "
-    "MLP. partition/split_non_iid.py implements the Dirichlet-based non-IID partitioning "
-    "into four banks. training/train.py implements centralized training with validation "
-    "and checkpointing of the best model. The centralized training serves as a "
-    "performance upper-bound reference before the federated version is implemented."
+    "Our experiment runner creates deterministic client shards per seed, reuses each "
+    "seed's partition across the compared methods, and records per-round validation "
+    "history plus final test metrics. The server can run FedAvg, loss/accuracy weighting, "
+    "FedProx, coordinate median, trimmed mean, Krum, and contribution-aware aggregation. "
+    "The final test set is evaluated once after training by default; the scorer and "
+    "threshold calibration use a separate validation reference."
 )
 
 doc.add_heading("5.3 Preliminary Results", level=2)
 
 doc.add_paragraph(
-    "The centralized training baseline was run for 20 epochs on the processed dataset "
-    "with a batch size of 64 and a learning rate of 0.001. The model uses binary "
-    "cross-entropy loss with positive-weighting proportional to the inverse fraud rate. "
-    "Training progress and validation metrics (precision, recall, F1, ROC-AUC) are "
-    "logged each epoch, and the best model checkpoint is saved. These metrics provide "
-    "a reference point against which the federated approaches will be compared."
+    "In the 20-round clean label-skew matrix, FedAvg averaged 0.7102 PR-AUC and "
+    "contribution-aware aggregation averaged 0.7031 across three seeds; the paired "
+    "difference was -0.0072 (95% seed-based interval [-0.0328, 0.0185]). In the "
+    "10-round sign-flip screen, contribution-aware averaged 0.7141 PR-AUC versus "
+    "FedAvg's 0.6840, but the paired interval crossed zero and median, trimmed mean, "
+    "and Krum were slightly higher on mean PR-AUC. In the corrected feature-skew run, "
+    "full scoring averaged 0.7170 versus 0.7119 for quality-only; the paired difference "
+    "was +0.0051 with a wide interval [-0.0076, 0.0178]. These are exploratory results "
+    "from a small number of seeds and a repeatedly used test set. We track all scenarios "
+    "and caveats in `docs/phase2_status.md`."
 )
 
 doc.add_heading("5.4 Initial Observations", level=2)
 
 doc.add_paragraph(
-    "Several observations have been made from the preliminary work. The extreme class "
-    "imbalance (0.17% fraud) makes ROC-AUC the most informative metric, as accuracy is "
-    "misleading when the vast majority of samples are negative. Positive-class weighting "
-    "in the loss function is effective at compensating for the imbalance. The Dirichlet "
-    "partitioning with α = 0.1 produces shards with noticeably different fraud "
-    "concentrations, which is essential for meaningfully testing contribution-aware "
-    "aggregation. The MLP architecture is sufficient as a baseline model for "
-    "demonstrating the federated framework."
+    "Because fraud is rare, we prioritize PR-AUC alongside ROC-AUC; thresholded metrics "
+    "also depend on validation calibration. Our paired results vary by scenario: the "
+    "contribution-aware method is not consistently ahead of FedAvg, and robust coordinate "
+    "baselines lead in some screens. Under feature skew, the corrected full profile was "
+    "nearly tied with quality-only, so the current evidence does not isolate a repeatable "
+    "benefit from the extra utility dimensions."
 )
 
 doc.add_heading("5.5 Challenges Encountered", level=2)
 
 doc.add_paragraph(
-    "Several challenges have been encountered. Balancing the class distribution within "
-    "each client shard while maintaining non-IID characteristics requires careful "
-    "partitioning design. Choosing sensible local training parameters (epochs, learning "
-    "rate) for the federated loop that do not cause client drift requires experimentation. "
-    "Designing scoring metrics that are meaningful yet computable from weights only "
-    "(without raw data) is an ongoing challenge. The dataset path and environment setup "
-    "also required attention to ensure reproducibility."
+    "We have worked through several methodological challenges. Rare positive examples "
+    "make client-level validation estimates noisy, so the quality score shrinks local "
+    "PR-AUC toward the cohort when fraud counts are small. We also corrected an "
+    "intermediate bootstrap implementation that sampled without replacement. Current "
+    "screens use small seed counts and reuse a fixed test set, so seed intervals do not "
+    "capture test-sample uncertainty or repeated-comparison bias. Calibrating update "
+    "reliability without penalizing legitimate client heterogeneity remains open."
 )
 
 doc.add_heading("5.6 Current Limitations", level=2)
 
 doc.add_paragraph(
-    "The current implementation has notable limitations. The federated training loop is "
-    "not yet fully implemented; only the centralized baseline exists. The scoring "
-    "pipeline is designed but not yet implemented. Privacy mechanisms such as encrypted "
-    "aggregation or differential privacy are not yet implemented. The simulated "
-    "environment uses only four clients on a single machine, which does not capture "
-    "real-world network conditions. These limitations define the immediate next steps "
-    "of the project."
+    "Our evaluation remains limited by a small number of seeds, short scenario screens, "
+    "and repeated use of the same held-out test set. The simulator runs on one machine "
+    "and has no secure aggregation or differential privacy. The heterogeneous "
+    "encoder/torso components are not integrated with `FedClient` or `FedServer`, and "
+    "the current attack hooks do not cover adaptive targeted poisoning. These limits "
+    "shape our next experiments."
 )
 
 add_page_break()
@@ -1042,29 +992,21 @@ doc.add_heading("Chapter 6 — Future Research Direction", level=1)
 doc.add_heading("6.1 Possible Extensions", level=2)
 
 doc.add_paragraph(
-    "Several extensions to the proposed system are possible. A graph-based client "
-    "relation module could model similarity between clients and use a graph neural "
-    "network to learn aggregation weights. Hierarchical aggregation could group clients "
-    "into clusters and aggregate within and between clusters, similar to HiFraud [4]. "
-    "Selective reconstruction after compression could couple communication efficiency "
-    "with contribution value: high-value components of an update are transmitted with "
-    "full fidelity while low-value components are compressed. Secure aggregation using "
-    "homomorphic encryption or additive masking [1], [6] could be added to strengthen "
-    "privacy guarantees. Differential privacy could be applied to the scoring metrics "
-    "themselves."
+    "We see several possible extensions: graph-based client relations, hierarchical "
+    "aggregation, and communication compression. Secure aggregation and differential "
+    "privacy could also be investigated, with their threat models and guarantees evaluated "
+    "explicitly. These mechanisms are not part of our current simulator."
 )
 
-doc.add_heading("6.2 Potential Novelty", level=2)
+doc.add_heading("6.2 Research Position and Open Questions", level=2)
 
 doc.add_paragraph(
-    "The most significant potential novelty of this work is the systematic, "
-    "multi-dimensional scoring of client contributions in a federated fraud detection "
-    "setting, combined with the temporal tracking of these contributions over time. "
-    "As noted in Chapter 2, the reviewed literature typically weights clients by a "
-    "single metric or focuses on security mechanisms. Combining quality, trust, "
-    "novelty, complementarity, and temporal trend into a single contribution score that "
-    "directly drives aggregation is, to the best of our knowledge based on the reviewed "
-    "literature, a direction that remains relatively unexplored in the fraud domain."
+    "Our literature review considers related work in client valuation, update "
+    "reliability, and fraud-focused federated learning. We are comparing those methods "
+    "with our validation-based utility signals to understand whether the combination "
+    "adds measurable value under feature heterogeneity. Current experiments are "
+    "exploratory and do not yet establish a consistent advantage; the question remains "
+    "open pending broader comparisons and stronger evaluation."
 )
 
 add_figure(
@@ -1090,23 +1032,22 @@ doc.add_paragraph(
 doc.add_heading("6.4 Future Experiments", level=2)
 
 doc.add_paragraph(
-    "Future experiments will include: the full federated loop with contribution-aware "
-    "aggregation; ablation studies for each scoring dimension; variation of the Dirichlet "
-    "concentration parameter α; scaling to 8–16 clients; concept-drift simulation by "
-    "modifying fraud patterns mid-training; comparison with FedProx and accuracy/loss-"
-    "weighted baselines; and privacy-aware experiments with noised or masked updates."
+    "Our next experiments focus on longer paired runs with more seeds, a prespecified "
+    "untouched evaluation set, and stronger targeted attacks. We also plan a true "
+    "chronological train/validation/test split and additional ablations to evaluate the "
+    "scorer under temporal change and feature heterogeneity. Privacy mechanisms such as "
+    "noised scores or secure aggregation require a separate threat-model and utility study."
 )
 
 doc.add_heading("6.5 Expected Contributions", level=2)
 
 doc.add_paragraph(
-    "The expected contributions of this project are: (1) a multi-dimensional client "
-    "scoring framework for federated fraud detection; (2) an empirical evaluation "
-    "demonstrating the value of contribution-aware aggregation under non-IID fraud data; "
-    "(3) an analysis of which scoring dimensions matter most and how they interact; "
-    "(4) a reproducible implementation consisting of data partitioning, training, "
-    "scoring, and aggregation modules; and (5) a structured project report suitable "
-    "for academic review."
+    "Our current work products include a multi-dimensional scorer, a reproducible "
+    "experiment runner, scenario and attack hooks, a dashboard, and paired comparisons "
+    "with established aggregation baselines. The evaluation remains exploratory: results "
+    "vary by scenario, and we have not observed consistent improvement over FedAvg. We "
+    "are using further ablations and literature comparisons to determine which scoring "
+    "signals are useful and where the approach is applicable."
 )
 
 add_page_break()
@@ -1118,25 +1059,21 @@ add_page_break()
 doc.add_heading("Conclusion", level=1)
 
 doc.add_paragraph(
-    "This report has presented the motivation, background, related work, proposed "
-    "approach, and preliminary progress for a federated learning framework for credit "
-    "card fraud detection with multi-dimensional client contribution scoring. The "
-    "review of recent literature — including FedFraud, HiFraud, SecureFed+, and an "
-    "MSc project on self-adaptive FL — revealed that while trust, security, and "
-    "clustering have received attention, a systematic multi-dimensional assessment of "
-    "client contribution that is directly used in aggregation remains largely "
-    "unaddressed in the fraud domain."
+    "In this report, we have described our local federated fraud-detection simulator, "
+    "the contribution-aware scorer, related work, and current experiments. Our literature "
+    "review considers research on trust, security, clustering, and client valuation; it "
+    "does not establish that multi-dimensional contribution scoring is new to the fraud "
+    "domain."
 )
 
 doc.add_paragraph(
-    "The proposed system evaluates each bank's submitted model weights along five "
-    "dimensions — quality, trust, novelty, complementarity, and temporal trend — and "
-    "uses the combined scores to weight aggregation. The architecture, workflow, "
-    "methodology, and experimental plan have been described. Preliminary work, "
-    "including data preprocessing, non-IID partitioning, and a centralized baseline, "
-    "has been completed and documented. The next steps are to implement the federated "
-    "loop, the scoring pipeline, and the contribution-aware aggregator, and then to "
-    "evaluate the system against the planned baselines."
+    "We have implemented data preprocessing, seeded scenario partitions, a same-schema "
+    "federated training loop, several aggregation baselines, contribution scoring, and a "
+    "results dashboard. Our evaluations show mixed performance across scenarios and do "
+    "not demonstrate a consistent gain over FedAvg or robust baselines. The heterogeneous "
+    "encoder/torso design remains a prototype, and the current test set has been reused "
+    "across screens. We plan to expand paired seeds, use an untouched evaluation set, and "
+    "continue comparing our scoring design with related work."
 )
 
 add_page_break()
@@ -1148,15 +1085,12 @@ add_page_break()
 doc.add_heading("Future Scope", level=1)
 
 doc.add_paragraph(
-    "Beyond the immediate next steps, the project has considerable scope for "
-    "extension. Real-world deployment considerations — such as asynchronous client "
-    "participation, client dropout, and varying network conditions — could be "
-    "simulated. Graph-based learning over client relationships could make aggregation "
-    "more intelligent. Hierarchical federated learning could group banks by fraud "
-    "profile. Secure aggregation and differential privacy could be integrated to "
-    "provide formal privacy guarantees. Finally, the framework could be adapted to "
-    "other financial fraud scenarios, such as money laundering detection or "
-    "fraudulent loan applications, and to other sensitive domains such as healthcare."
+    "We see several directions for extending the simulator: asynchronous client "
+    "participation, client dropout, changing network conditions, and hierarchical or "
+    "graph-based aggregation. Secure aggregation and differential privacy could also be "
+    "investigated, with their threat models and guarantees evaluated explicitly. Further "
+    "work could test other financial fraud datasets and domains after the current methods "
+    "have been evaluated on a broader set of seeds and untouched test data."
 )
 
 add_page_break()

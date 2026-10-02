@@ -4,12 +4,14 @@
 you are a bank.** You pick one of the bank datasets (`bank_a.csv`, `bank_b.csv`,
 `bank_c.csv`, `bank_d.csv` — more if a newer partition was generated, e.g. `bank_h`
 for 8-bank partitions), train your own fraud-detection model on it, and submit
-**weights + metrics in the exact output structure below**. The project maintainer
-runs the central server that aggregates all banks into one global model — that
-global model is trained on **your** contribution.
+**weights + metrics in the proposed output structure below**. We maintain the
+experiment code and review contribution proposals as a team.
 
-You never send us your data. You never send us anything except your trained model
-weights and a small metrics file. That is the entire privacy premise of this project.
+This document describes a proposed contribution format; the current experiment
+runner does not yet load `contributions/<bank>/` submissions. Please do not
+commit transaction data. Model weights and metrics can still reveal information,
+and this repository does not provide secure aggregation or differential
+privacy, so this workflow is not a formal privacy guarantee.
 
 ---
 
@@ -58,10 +60,11 @@ bank per round. If all banks are taken, ask — we can regenerate more shards wi
 
 **Creative freedom**: architecture, optimizer, learning rate, epochs, loss shaping,
 ensembling inside the model, exotic regularization — all yours. You may even ship a
-transformer, a CNN over sequences, whatever — as long as it satisfies the
-compatibility rules below, the server can aggregate it.
+transformer, a CNN over sequences, whatever — but our current training loop only
+supports the shared MLP architecture and matching state-dict tensors. A different
+architecture needs an integration proposal before it can be evaluated here.
 
-Compatibility rules (hard requirements):
+The following compatibility rules describe the current shared-model path:
 
 1. **Input**: a `torch.float32` tensor of shape `(batch, 30)`.
 2. **Output**: raw logits of shape `(batch, 1)` — the server applies `sigmoid`.
@@ -90,7 +93,11 @@ contributions/<bank_name>/
 └── report.json       # metadata + metrics, exact schema below
 ```
 
-### `report.json` schema (all fields required)
+### Proposed `report.json` schema
+
+This is a review template. No current command validates or ingests the file
+automatically; we can make it an executable contract when the contribution
+loader is implemented.
 
 ```json
 {
@@ -128,10 +135,9 @@ Rules for `report.json`:
 - `metrics` must be computed **on your own held-out validation split** of your bank's
   shard (the reference `FedClient` uses 20% held out with seed 42 — use the same so
   numbers are comparable).
-- Report metrics honestly. The server re-verifies: a submitted model is scored on
-  the server's proxy mix, and wildly inconsistent submissions are down-weighted by
-  the **trust** dimension of the contribution scorer — that's the system working,
-  but blatant fabrication gets a PR rejected.
+- Report metrics honestly. The current experiment runner does not ingest or
+  independently verify this proposed submission format. If we add that workflow,
+  we will document its evaluation and validation checks here.
 - `pos_weight_used` should be `true` for heavily imbalanced shards (fraud is ~0.17%
   globally; your shard's `class_counts` tell you your local reality).
 
@@ -139,10 +145,9 @@ Rules for `report.json`:
 
 - `torch.save(model.state_dict(), "model.pt")` — a plain state_dict, **not** a
   checkpoint dict. Keys must match `state_dict_prefix` + submodule names.
-- Include all floating parameters. The server averages tensors with the same shape
-  as the reference model only if you use the reference architecture; otherwise your
-  model is aggregated through the contribution-aware path as a standalone submission
-  (weight-space averaging requires identical shapes — see §7 "heterogeneous mode").
+- Include all model parameters. The current aggregation path requires compatible
+  state-dict keys and tensor shapes; it cannot aggregate a different architecture
+  as a standalone submission. See §7 for the status of heterogeneous support.
 
 ## 6. Minimum quality bar (PR acceptance checklist)
 
@@ -157,33 +162,33 @@ Rules for `report.json`:
 - [ ] If you include a training script `contributions/<bank>/train_<bank>.py`, it
       must run from repo root: `python contributions/<bank>/train_<bank>.py`.
 
-## 7. Heterogeneous mode (advanced / different architecture)
+## 7. Heterogeneous Models (Not Yet Integrated)
 
-Weight averaging (`fl/aggregation.py`) needs identical tensor shapes. If your
-architecture differs from the reference MLP, your submission still matters:
+Weight aggregation (`fl/aggregation.py`) needs matching tensor shapes and
+parameter meanings. Our encoder/torso components in `models/heterogeneous.py`
+are prototypes; the current client/server loop does not train or aggregate them.
+If you want to propose a different architecture, discuss an integration plan
+with us rather than assuming the current runner can load it.
 
-- The server's **contribution-aware** scorer evaluates your model on the proxy mix
-  and uses your score to weight an ensemble / knowledge-distillation step
-  (`fl/scoring.py` — quality, trust, novelty, complementarity, temporal).
-- Set `"state_dict_prefix"` honestly and note in `architecture` that you are a
-  heterogeneous submission. Heterogeneous contributions are welcome — they're the
-  best test of the scoring system — but expect review discussion.
+See [`docs/heterogeneous_architecture.md`](docs/heterogeneous_architecture.md)
+for the proposal and current integration gaps.
 
-## 8. How your submission is used
+## 8. Current Training Flow
 
-Round flow (`fl/server.py`):
+The current experiment runner (`experiments/run_experiments.py`) creates clients
+from local CSV shards, trains the shared MLP, and records each run in JSON. It
+does not load `model.pt` or `report.json` submissions. In that current flow:
 
-1. Your `model.pt` + `report.json` are loaded as one client update
-   (`client_id = bank`, `n_samples = n_train_samples`, metrics from your report).
-2. The `ClientScorer` computes your five contribution dimensions and softmax weight.
-3. All banks are fused via `contribution_aware` aggregation; the global model is
-   evaluated on the held-out test set (ROC-AUC / F1 / precision / recall per round,
-   logged to `results/`).
-4. Per-round results and per-bank scores are published after each round — you can
-   see exactly how much your bank mattered.
+1. `FedClient` loads a shard and splits it locally into training and validation data.
+2. Each client trains from the current global model and returns cloned weights,
+  its training sample count, and local validation metrics.
+3. `FedServer` aggregates updates, records per-round validation metrics, and
+  evaluates the held-out test set once at the end in the experiment runner.
+4. The runner saves configuration, round history, and final metrics under
+  `results/`; it does not publish a contribution-submission package.
 
-**Privacy guarantee**: the server code only consumes `state_dict`s + metrics. Your
-CSV never leaves your machine; only `model.pt` + `report.json` enter the repo.
+This is a local simulation, not a privacy guarantee. The server process can read
+the reference and test files, and model updates or metrics may reveal information.
 
 ## 9. Workflow
 
@@ -198,11 +203,12 @@ CSV never leaves your machine; only `model.pt` + `report.json` enter the repo.
 
 ## 10. Non-model contributions
 
-Bugs, docs, experiments (`experiments/run_experiments.py` is planned — see
-`DEV_LOG.md` for phase status), aggregation/scoring improvements, and the
-orchestrator (`fl/train_federated.py`) are all open. For changes to the federated
-core (`fl/`), open an issue first with your proposal — the aggregation math is
-report-critical and changes need justification against the report's §3.5 / §4.8.
+Bugs, documentation, experiment design, aggregation/scoring improvements, and
+the heterogeneous training integration are useful contributions. Our experiment
+runner already exists at `experiments/run_experiments.py`; a contribution loader
+and `fl/train_federated.py` do not. For changes to the federated core (`fl/`),
+please open an issue with the proposal and rationale so we can review its effect
+on the experimental protocol.
 
 Questions → open an issue. Happy banking. 🏦
 

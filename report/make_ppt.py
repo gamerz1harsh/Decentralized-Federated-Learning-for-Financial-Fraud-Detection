@@ -131,19 +131,16 @@ add_title_bar(slide, "Abstract")
 
 add_textbox(slide, Inches(0.7), Inches(1.3), Inches(12.0), Inches(5.8),
             "Credit card fraud remains a persistent and financially damaging problem. "
-            "Federated learning (FL) allows multiple banks to train a shared fraud detection "
-            "model collaboratively without exchanging raw transaction data, preserving privacy "
-            "while benefiting from collective knowledge.",
+            "We use a local federated-learning simulation to study how multiple clients can "
+            "train on separate transaction shards and combine model updates. The simulator "
+            "does not implement secure aggregation or differential privacy.",
             font_size=18, color=DARK_BLUE)
 
 add_textbox(slide, Inches(0.7), Inches(2.6), Inches(12.0), Inches(4.5),
-            "However, banks in a federation are not equal \u2014 they differ in data quality, "
-            "fraud patterns, and reliability. This project proposes a contribution-aware FL "
-            "framework where each bank's submitted model weights are scored along multiple "
-            "dimensions \u2014 quality, trust, novelty, complementarity, and temporal trend \u2014 "
-            "before aggregation. Instead of treating all banks uniformly (as in standard FedAvg), "
-            "the proposed approach assigns each client a contribution score reflecting how "
-            "valuable its update is to the federation.",
+            "Clients differ in data size and fraud patterns. We compare FedAvg and robust "
+            "baselines with an experimental contribution-aware scorer using validation "
+            "quality, update-scale reliability, hard-fraud utility, complementarity, and "
+            "history. Results vary by scenario, with no consistent overall gain established.",
             font_size=18, color=DARK_BLUE)
 
 # ==========================================================
@@ -157,7 +154,7 @@ add_title_bar(slide, "Introduction: Background & Problem")
 add_bullets(slide, Inches(0.7), Inches(1.4), Inches(12.0), Inches(5.8), [
     "Fraud is extremely rare (~0.17% of transactions) and adversarial \u2014 fraudsters constantly adapt.",
     "Centralized fraud detection requires pooling sensitive data, raising privacy and regulatory concerns.",
-    "Federated learning trains a shared model across banks without sharing raw data \u2014 only model weights.",
+    "Our simulator keeps client training shards separate and exchanges model updates plus validation metrics.",
     "Problem: In a federation, banks differ in data size, quality, fraud patterns, and reliability.",
     "Standard FedAvg weights all clients equally (or by sample count), ignoring these differences.",
     "Need: A principled way to score each client's contribution and use it to guide aggregation.",
@@ -169,16 +166,16 @@ add_bullets(slide, Inches(0.7), Inches(1.4), Inches(12.0), Inches(5.8), [
 
 slide = prs.slides.add_slide(BLANK)
 add_bg(slide, WHITE)
-add_title_bar(slide, "Proposed Approach: System Architecture")
+add_title_bar(slide, "Implemented System: Same-Schema Simulation")
 
 add_figure(slide, os.path.join(FIGURES_DIR, "fig1_system_architecture.png"),
            Inches(0.7), Inches(1.3), width=Inches(7.5))
 
 add_textbox(slide, Inches(8.5), Inches(1.5), Inches(4.3), Inches(5.5),
-            "Each bank trains locally on private data.\n\n"
-            "Only model weights are uploaded to the central server.\n\n"
-            "The server scores each submission along multiple dimensions.\n\n"
-            "Contribution-aware aggregation produces the global model.",
+            "Each client trains from its assigned shard.\n\n"
+            "Clients return model updates and validation metrics.\n\n"
+            "The server applies the selected aggregation method.\n\n"
+            "This simulator does not provide secure aggregation or differential privacy.",
             font_size=16, color=DARK_BLUE)
 
 # ==========================================================
@@ -193,11 +190,11 @@ add_figure(slide, os.path.join(FIGURES_DIR, "fig3_scoring_pipeline.png"),
            Inches(0.7), Inches(1.3), width=Inches(7.5))
 
 add_textbox(slide, Inches(8.5), Inches(1.5), Inches(4.3), Inches(5.5),
-            "Quality \u2014 Is the knowledge useful?\n\n"
-            "Trust \u2014 Can we trust its source?\n\n"
-            "Novelty \u2014 Is it genuinely new?\n\n"
-            "Complementarity \u2014 Does the federation already have it?\n\n"
-            "Temporal \u2014 Is it emerging or becoming obsolete?",
+            "Quality \u2014 Local validation PR-AUC, adjusted for small fraud samples.\n\n"
+            "Reliability \u2014 Robust check of update scale and client history.\n\n"
+            "Hard-fraud utility \u2014 Leave-one-out gain on difficult positives.\n\n"
+            "Complementarity \u2014 Leave-one-out validation PR-AUC gain.\n\n"
+            "Temporal \u2014 Smoothed history of marginal utility.",
             font_size=16, color=DARK_BLUE)
 
 # ==========================================================
@@ -213,11 +210,11 @@ add_figure(slide, os.path.join(FIGURES_DIR, "fig2_training_workflow.png"),
 
 add_textbox(slide, Inches(8.5), Inches(1.5), Inches(4.3), Inches(5.5),
             "1. Server distributes the global model.\n\n"
-            "2. Clients train locally on private data.\n\n"
-            "3. Clients upload model weights.\n\n"
-            "4. Server scores each client's contribution.\n\n"
-            "5. Contribution-aware aggregation.\n\n"
-            "6. Repeat for R rounds.",
+            "2. Clients train on separate local shards.\n\n"
+            "3. Clients return updates and validation metrics.\n\n"
+            "4. Server applies the selected aggregation method.\n\n"
+            "5. Validation metrics are recorded for the round.\n\n"
+            "6. Repeat for the configured rounds.",
             font_size=16, color=DARK_BLUE)
 
 # ==========================================================
@@ -229,12 +226,12 @@ add_bg(slide, WHITE)
 add_title_bar(slide, "Summary & Next Steps")
 
 add_bullets(slide, Inches(0.7), Inches(1.4), Inches(12.0), Inches(5.8), [
-    "Proposed: contribution-aware FL for fraud detection using multi-dimensional client scoring.",
-    "Scores (quality, trust, novelty, complementarity, temporal) directly drive aggregation weights.",
-    "Privacy preserved \u2014 server only sees model weights, never raw data.",
-    "Next: implement the federated loop, scoring pipeline, and contribution-aware aggregator.",
-    "Evaluate against FedAvg and single-metric baselines under non-IID conditions.",
-    "Ablation studies to isolate the effect of each scoring dimension.",
+    "We implemented a same-schema federated simulator with contribution-aware scoring.",
+    "The scorer uses local quality, update reliability, hard-fraud utility, complementarity, and history.",
+    "Our local simulator has no secure aggregation or differential privacy.",
+    "Results vary by scenario and do not show consistent gains over FedAvg.",
+    "Next: expand paired seeds and evaluate on an untouched test set.",
+    "Integrate heterogeneous encoders after resolving latent-space alignment.",
 ], font_size=17)
 
 # ==========================================================

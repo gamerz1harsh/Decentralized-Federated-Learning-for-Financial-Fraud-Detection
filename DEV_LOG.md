@@ -1,7 +1,7 @@
 # Development Handoff: Federated Fraud Detection
 
-This file records the code state and next steps so work can continue in another
-AI session without relying on chat history. The roadmap phases follow
+We use this file to summarize the current implementation, evaluation, and next
+steps. The roadmap phases follow
 `FL_Fraud_Phase2_Phase3_Roadmap.docx`; the heterogeneous architecture is specified
 in `docs/heterogeneous_architecture.md`.
 
@@ -10,12 +10,13 @@ in `docs/heterogeneous_architecture.md`.
 - Experiments run in the existing single-machine simulator. Multi-machine
   deployment is out of scope.
 - Phase 1 means the existing same-schema FL system plus methodological fixes.
-- Phase 2 proves contribution-aware value with a leakage-free harness, scenarios,
-  attacks, baselines, and improved scoring.
-- Phase 3 explores different feature schemas. Follow the architecture spec:
-  each bank owns a private schema-specific encoder; only fixed-width shared torso
-  weights are federated and aggregated. Do not average encoders with different
-  shapes or meanings. Different modalities and deployment are later/optional.
+- Phase 2 evaluates contribution-aware aggregation with a leakage-aware harness,
+  scenarios, attacks, baselines, and scorer ablations.
+- Phase 3 explores different feature schemas. Our architecture proposal gives
+  each bank a private schema-specific encoder and federates only fixed-width
+  shared-torso weights. Independently trained encoders can have different shapes
+  or latent meanings, so averaging them is not well-defined. Different modalities
+  and deployment are later/optional.
 
 ## Implemented in the current worktree
 
@@ -93,8 +94,8 @@ comparisons are implemented. Remaining evaluation gaps are listed below.
   (precision and recall both 0.8298), while ranking metrics were unchanged.
 - A 20-round, three-seed clean matrix finished before the PR-AUC scorer refactor
   at `results/federated_20261001T204502Z.json`. A second PR-AUC-enabled matrix
-  was interrupted after seed 43 loss-weighted. Do not combine these files; rerun
-  the clean matrix after the scorer stabilizes.
+  was interrupted after seed 43 loss-weighted. We keep these artifacts separate
+  from the post-refactor clean matrix because their scorer implementations differ.
 - A post-refactor 20-round clean comparison completed on CUDA for seeds 42-44
   (`results/phase2_clean_matrix/`). The contribution-aware mean test PR-AUC was
   0.7031 versus FedAvg 0.7102; paired delta was -0.0072 (95% t interval
@@ -103,8 +104,8 @@ comparisons are implemented. Remaining evaluation gaps are listed below.
   42-44 (`results/phase2_signflip_matrix/`). Contribution-aware PR-AUC exceeded
   FedAvg on all three seeds, with mean paired delta +0.0301, but its 95% t
   interval crossed zero ([-0.0363, 0.0966]). Robust coordinate baselines had
-  slightly higher mean PR-AUC but lower ROC-AUC. This is preliminary evidence,
-  not a robustness or superiority claim; only three seeds and 47 test frauds.
+  slightly higher mean PR-AUC but lower ROC-AUC. These results are preliminary:
+  the comparison uses three seeds and 47 test frauds.
 - Added deterministic quantity-skew, feature-skew, temporal, and noisy-label
   partitions; scorer ablation profiles; coordinate-level influence accounting
   for median/trimmed mean; and per-round result callbacks. These are harness
@@ -120,13 +121,13 @@ comparisons are implemented. Remaining evaluation gaps are listed below.
   (95% seed-based t interval [-0.0076, +0.0178]). Three of four seed deltas
   were +0.0006 to +0.0015, while seed 45 contributed +0.0170. Full scoring
   differed from quality plus novelty and complementarity by only +0.0002 on
-  average. This does not establish repeatable incremental utility-profile
-  value; see `docs/phase2_status.md` and
+  average. We have not yet observed a repeatable gain from the added utility
+  dimensions; see `docs/phase2_status.md` and
   `results/phase2_feature_skew_bootstrap/`.
   The 5-round quantity-skew screen showed a +0.0416 paired delta, but its
   10-round follow-up reversed direction: -0.0299 across all four seeds
-  (seed-based 95% t interval [-0.0494, -0.0105]). Do not claim
-  contribution-aware superiority from the short screen.
+  (seed-based 95% t interval [-0.0494, -0.0105]). The short-screen gain did not
+  persist in the longer follow-up.
 - Scale attack (client 0 update delta multiplied by 10) exposed a scorer failure:
   mean contribution-aware minus FedAvg PR-AUC was -0.0234 over three seeds, and
   in one seed the attacker's trust remained 1.0. Robustness is unresolved.
@@ -155,16 +156,18 @@ comparisons are implemented. Remaining evaluation gaps are listed below.
 
 - Broader and deeper paired stress testing remains: current scenario/attack
   screens are mostly five rounds and use a repeatedly inspected fixed test set.
-  They are exploratory and not enough to call Phase 2 complete.
+  These results are exploratory; we need deeper evaluation before Phase 2 is
+  complete.
 - Heterogeneous encoder/torso training and its evaluation reference are not yet
   wired into FedClient/FedServer. Independent private encoders can rotate the
   latent basis differently; equal latent width alone does not make torso averaging
-  valid. Resolve alignment (for example, shared feature-keyed projection weights
-  or teacher-aligned local encoders) before claiming schema-heterogeneous FL.
-- The scorer was benchmarked against FedAvg and robust baselines in the two
-  matrices above, but has not passed a broad evaluation. Do not claim novelty,
-  robustness, or superiority until scenario/attack ablations and literature
-  comparisons are completed.
+  valid. We still need an alignment approach, such as shared feature-keyed
+  projections or teacher-aligned local encoders, before evaluating
+  schema-heterogeneous FL end to end.
+- We have compared the scorer with FedAvg and robust baselines in several
+  matrices, but its evaluation is still narrow. We are expanding scenario and
+  attack ablations and comparing the approach with related contribution-
+  valuation and reliability methods.
 
 ## Next actions
 
@@ -172,9 +175,8 @@ comparisons are implemented. Remaining evaluation gaps are listed below.
    adaptive attacks without punishing ordinary client heterogeneity.
 2. Repeat key scenarios at 20 rounds with more seeds and a prespecified,
    untouched evaluation set; add chronological train/validation/test splits.
-3. Review novelty against contribution-valuation literature; generic leave-one-
-   out utility, update reliability, and class-specific value are not by
-   themselves novel claims.
+3. Compare our scoring design with contribution-valuation literature, including
+  leave-one-out utility, update reliability, and class-specific value.
 4. Wire local encoders and a shared torso only after resolving latent alignment
    and canonical validation encoder design.
 

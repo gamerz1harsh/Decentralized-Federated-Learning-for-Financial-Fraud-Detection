@@ -1,6 +1,6 @@
 # Federated Fraud Detection: Codebase Guide
 
-This guide describes the implementation currently in this repository. It is organized around the actual data flow, callable functions, notebook cells, saved-result contracts, and the reasons behind the design. It also marks unfinished work and places where older companion documents describe an earlier version.
+We built this guide around the implementation currently in the repository: its data flow, functions, notebook cells, saved-result contracts, and design rationale. We also distinguish working code from unfinished work and note where older companion documents describe an earlier version.
 
 ## 1. Start Here
 
@@ -24,7 +24,7 @@ Keep three boundaries in mind:
 
 1. `validation.csv` is used for per-round validation metrics, threshold calibration, and contribution utility. `test.csv` is used for final evaluation and is not the scorer reference in the experiment runner.
 2. The classic MLP and all current aggregators require matching parameter names and shapes. The heterogeneous encoder/torso files are building blocks, not a training path wired into `FedClient` or `FedServer`.
-3. Results are exploratory. Seeds are few, many screens have only five rounds, and the same final test split has been reused. Do not read the reported seed-based intervals as test-sample uncertainty or confirmatory tests.
+3. Results are exploratory. Seeds are few, many screens have only five rounds, and the same final test split has been reused. The reported intervals describe seed variation; they do not measure test-sample uncertainty or serve as confirmatory tests.
 
 ## 2. Repository Map
 
@@ -269,7 +269,7 @@ python -m experiments.run_experiments --device cuda --threads 2 --batch-size 204
 - `select_threshold(model, loader, device)` searches validation thresholds for maximum F1; it returns 0.5 if no usable thresholds exist.
 - `main()` sets random seeds and device/thread settings; loads train, validation, and test CSVs; trains the MLP with Adam and globally computed positive-class weighting; saves the checkpoint with lowest validation loss; reloads that checkpoint; selects a threshold on validation; then reports final test metrics at both 0.5 and the validation-selected threshold.
 
-Checkpoint selection by validation loss is a simple, reproducible stopping rule. Threshold selection is separate because a ranking model's useful decision cutoff is not generally 0.5 under severe imbalance. Do not choose a threshold from test labels. ROC-AUC/PR-AUC do not depend on that threshold; F1, precision, and recall do.
+Checkpoint selection by validation loss is a simple, reproducible stopping rule. Threshold selection is separate because a ranking model's useful decision cutoff is not generally 0.5 under severe imbalance. We select thresholds from validation data, never test labels. ROC-AUC/PR-AUC do not depend on that threshold; F1, precision, and recall do.
 
 ## 12. Heterogeneous Feature Work: Prototype, Not a Training Path
 
@@ -428,4 +428,4 @@ The experiment CLI checks that data files exist and rejects identical validation
 - `CONTRIBUTING.md` describes a bank-submission/report format and heterogeneous submission flow that is not implemented by the current experiment runner. Treat it as aspirational until its contract is reconciled with `FedClient`, `FedServer`, and the JSON runner.
 - `README.md`, `DEV_LOG.md`, and `report/` contain useful context but may lag code or include planned claims. For behavior, prefer the implementation referenced in this guide and inspect the artifact configuration used for a result.
 
-The defensible current research conclusion is “investigation in progress,” not “contribution-aware aggregation is better.” The next meaningful evidence would come from more paired seeds, longer runs, a prespecified untouched test set, stronger targeted attacks, and trust calibration that does not mistake legitimate heterogeneity for malicious behavior.
+Our current results are exploratory and vary across scenarios. We are extending the paired evaluation with more seeds, longer runs, an untouched test set, stronger targeted attacks, and trust calibration that distinguishes legitimate heterogeneity from malicious behavior.

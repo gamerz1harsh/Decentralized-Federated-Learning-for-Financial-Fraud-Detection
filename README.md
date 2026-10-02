@@ -29,8 +29,8 @@ multi-institution system.
 - **Five-dimension contribution scoring** — local fraud quality, robust
   update-scale reliability, hard-fraud utility, leave-one-out validation
   PR-AUC complementarity, and historical utility are blended into aggregation
-  weights. The scorer is experimental; superiority over FedAvg has not been
-  established.
+  weights. We are evaluating the scorer across scenarios; results so far are
+  mixed and have not shown a consistent gain over FedAvg.
 - **Leakage-aware evaluation**: scorer references use separate validation data;
   the final test split is evaluated once after training in the experiment
   runner. Existing results are exploratory and reuse a fixed test set.
@@ -200,12 +200,14 @@ own copy of the dataset placed in `data/raw/`.
 
 ## Current Limitations
 
-Phase 2 is ongoing. Results use a small number of seeds and repeatedly inspect
-the same held-out test set; intervals describe seed variation only. The
-contribution-aware method has not shown consistent superiority over FedAvg or
-robust baselines. Heterogeneous encoder/torso components are prototypes and are
-not connected to the federated training loop. See [docs/phase2_status.md](docs/phase2_status.md)
-for the current evidence and [guide.md](guide.md) for implementation details.
+We are continuing Phase 2 evaluation. Current results use a small number of
+seeds and reuse the same held-out test set, so intervals describe seed
+variation rather than test-sample uncertainty. Performance varies by scenario;
+we have not found a consistent gain over FedAvg or robust baselines. Our
+heterogeneous encoder/torso components remain prototypes and are not yet
+connected to the federated training loop. See
+[docs/phase2_status.md](docs/phase2_status.md) for results and [guide.md](guide.md)
+for implementation details.
 
 ---
 
