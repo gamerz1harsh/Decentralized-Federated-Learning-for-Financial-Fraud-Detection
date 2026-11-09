@@ -1,217 +1,179 @@
-# Contribution-Aware Federated Learning for Financial Fraud Detection
+# Encoder + Adaptive Contribution Scoring for Fraud Detection
 
-A **contribution-aware federated learning simulation** for credit card fraud
-detection. Simulated banks train on separate, **non-IID** transaction shards
-and contribute model updates to a shared global model. Raw transaction rows
-are not sent as round updates; this local simulator does not implement secure
-aggregation, encryption, or differential privacy, and is not a deployed
-multi-institution system.
+This project is a single-machine simulation of federated credit-card fraud
+detection. Its current research focus is **schema-specific private encoders,
+a shared federated torso, and bank-adaptive paired contribution scoring**.
+It is a prototype for studying aggregation behavior, not a deployed or
+privacy-preserving multi-bank system.
 
-| | |
-|---|---|
-| **Problem** | Credit card fraud detection from highly imbalanced transaction data (≈0.17% fraud). |
-| **Paradigm** | FedAvg, loss/accuracy weighting, FedProx, coordinate median, trimmed mean, Krum, and experimental 5-dimension contribution-aware aggregation. |
-| **Data split** | Non-IID, capped-**Dirichlet** partition across simulated banks (α = 0.1 by default). |
-| **Data boundary** | Training shards stay separate in the simulation; only model updates and summary metrics cross the client/server API. This is not a formal privacy guarantee. |
-| **Stack** | Python · PyTorch · scikit-learn · pandas · Jupyter |
+## Approach
 
----
+Each simulated bank receives a different subset of transaction features and
+keeps its encoder local. Banks train a shared fixed-width torso, and only torso
+updates are aggregated. The contribution-aware run evaluates candidate shared
+states on a common scorer-reference split through the clients' private encoders.
 
-## Highlights
+The adaptive scorer combines two pairs of signals:
 
-- **Non-IID banks that mimic reality** — banks get deliberately different
-  sizes, fraud ratios, and class mixes via a *capped* Dirichlet partitioner
-  (`partition/split_non_iid.py`).
-- **Multiple aggregation baselines** (`fl/aggregation.py`): FedAvg,
-  loss-weighted, accuracy-weighted, coordinate median, trimmed mean, Krum, and
-  contribution-aware. FedProx changes the local objective and uses FedAvg for
-  server aggregation.
-- **Five-dimension contribution scoring** — local fraud quality, robust
-  update-scale reliability, hard-fraud utility, leave-one-out validation
-  PR-AUC complementarity, and historical utility are blended into aggregation
-  weights. We are evaluating the scorer across scenarios; results so far are
-  mixed and have not shown a consistent gain over FedAvg.
-- **Leakage-aware evaluation**: scorer references use separate validation data;
-  the final test split is evaluated once after training in the experiment
-  runner. Existing results are exploratory and reuse a fixed test set.
-- **Experiment inspection**: the Streamlit dashboard summarizes and filters
-  all saved artifacts, reports paired per-seed comparisons within each run,
-  and drills into round, client, and scorer traces.
-- **Drop-in dataset support** — all paths are dynamic (`pathlib`, resolved from
-  the repo root), so no hardcoded user paths; clone, add data, and run.
+- **Local evidence:** quality + trust.
+- **Cross-client utility:** novelty + complementarity.
 
----
+Each bank receives an individual utility-pair weight based on its
+complementarity and temporal scores:
 
-## Project Structure
-
-```
-├── data/
-│   ├── process.ipynb          # Preprocessing (dedup, train/validation/test, scale)
-│   ├── raw/                   # <-- your raw creditcard.csv (not committed)
-│   └── processed/             # train/validation/test and generated shards (ignored)
-├── dataset/
-│   └── fraud_dataset.py       # PyTorch Dataset (30 features + Class)
-├── models/
-│   └── fraud_model.py         # MLP 30→64→32→1 (ReLU + Dropout 0.3)
-├── partition/
-│   ├── split_non_iid.py       # Capped-Dirichlet non-IID bank splitter
-│   └── scenarios.py           # Scenario-specific seeded experiment partitions
-├── fl/                        # Federated core
-│   ├── client.py              # FedClient — one bank trains locally
-│   ├── server.py              # FedServer — rounds, scoring, aggregation, eval
-│   ├── aggregation.py         # fedavg / loss_weighted / accuracy_weighted / contribution_aware
-│   ├── scoring.py             # ClientScorer — 5-dimension contribution
-│   ├── robustness.py           # Controlled scale / sign-flip / noise update hooks
-│   ├── data_heg.py             # Feature-schema inspection and shard helpers
-│   └── smoke_test.py          # end-to-end synthetic sanity check
-├── models/heterogeneous.py    # Encoder/torso prototype; training is not wired yet
-├── experiments/
-│   └── run_experiments.py     # seeded local baselines and JSON results
-├── dashboard/app.py           # All-artifact overview and selected-run inspector
-├── tests/                     # Focused Phase 2 component tests
-├── training/
-│   ├── train.py               # centralized baseline → checkpoints/best_model.pth
-│   ├── test_model.py          # forward-pass shape check
-│   └── test_dataset.py        # dataset/loader check
-├── report/                    # figure / report / PPT generators + outputs
-├── checkpoints/               # saved weights (not committed)
-└── requirment.txt
+```text
+utility_weight = clip(0.2 + 0.6 * (0.7 * complementarity + 0.3 * temporal), 0.2, 0.8)
+local_weight   = 1 - utility_weight
 ```
 
-> Deep code reference: **[guide.md](guide.md)** documents current functions,
-> classes, preprocessing cells, design rationale, and limitations.
-> Phase-by-phase progress: **[DEV_LOG.md](DEV_LOG.md)**.
-> Contribute a bank or model: **[CONTRIBUTING.md](CONTRIBUTING.md)**.
+Quality reflects local validation PR-AUC; trust reflects update-scale
+reliability; novelty measures utility on difficult fraud cases; complementarity
+measures leave-one-client-out reference PR-AUC gain; temporal carries utility
+history forward. The resulting per-bank pair weights and aggregation weights
+are recorded in each run artifact.
 
----
+## Important limitations
 
-## Getting Started
+- The "banks" are synthetic feature-subset shards from one source dataset.
+  They are not independent financial institutions or evidence of real
+  institution-specific fraud patterns.
+- The simulator uses a coordinating server. It is not peer-to-peer decentralized
+  FL.
+- Raw rows remain local to each simulated client during training, but this
+  implementation does not provide secure aggregation, differential privacy, or
+  a formal privacy guarantee. The simulator evaluates shared-state candidates
+  using a common reference split.
+- Feature-keyed encoder initialization and the shared latent space are
+  alignment heuristics, not a validated guarantee of semantic alignment.
+- Current metrics are exploratory. Small seed counts, repeated use of the same
+  held-out test split, and heuristic scorer design do not establish superiority
+  or research novelty.
 
-### 1. Install dependencies
+## Setup
 
-```bash
-python -m venv .venv                # optional but recommended
-.venv\Scripts\activate              # Windows (bash: source .venv/bin/activate)
+Use Python 3.10+ and install the dependencies from the repository root:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirment.txt
 ```
 
-### 2. Add your dataset
+Place the Kaggle Credit Card Fraud Detection `creditcard.csv` at
+`data/raw/creditcard.csv`, then run all cells in `data/process.ipynb`. This
+creates `data/processed/train.csv`, `validation.csv`, and `test.csv`.
 
-Download the Kaggle *Credit Card Fraud Detection* dataset (`creditcard.csv`)
-and place it at:
+The scorer and monitor must use separate portions of validation. Create the
+two files from `validation.csv` with a stratified split:
 
-```
-data/raw/creditcard.csv
-```
-
-All paths in the code are **dynamic** (resolved relative to the project root
-with `pathlib`) — there are no hardcoded user-specific paths.
-
-### 3. Preprocess
-
-Run `data/process.ipynb` (Run All). It drops duplicates, creates stratified
-train/validation/test splits, fits scaling on train only, and writes:
-
-```
-data/processed/train.csv
-data/processed/validation.csv
-data/processed/test.csv
+```powershell
+python -c "import pandas as pd; from sklearn.model_selection import train_test_split; f=pd.read_csv('data/processed/validation.csv'); monitor,reference=train_test_split(f,test_size=0.5,random_state=2026,stratify=f['Class']); monitor.to_csv('data/processed/validation_monitor_hetero.csv',index=False); reference.to_csv('data/processed/scorer_reference_hetero.csv',index=False)"
 ```
 
-### 4. Create classic non-IID bank splits (optional)
+The held-out `test.csv` is reserved for final evaluation. Do not select scorer
+profiles using test metrics.
 
-```bash
-python partition/split_non_iid.py
-# optional flags:
-#   --alpha 0.1 --num-banks 4 --min-frac 0.05 --max-frac 0.60 --seed 42
+## Run the adaptive paired experiment
+
+From `Fed/`, run:
+
+```powershell
+python -m experiments.run_heterogeneous --seeds 54 55 56 --rounds 5 --device cpu --validation data/processed/validation_monitor_hetero.csv --scorer-reference data/processed/scorer_reference_hetero.csv --scorer-profile adaptive_pairs
 ```
 
-Writes `data/processed/banks/bank_a.csv`, `bank_b.csv`, … and prints a
-per-bank summary (samples, fraud count, fraud ratio, file size).
-The experiment runner creates its own scenario- and seed-specific shards; it
-does not consume these default bank files.
+The runner compares:
 
-### 5. Train the centralized baseline
+1. Heterogeneous encoder + FedAvg.
+2. Heterogeneous encoder + adaptive contribution-aware aggregation.
+3. Full-schema FedAvg as a contextual reference (it has access to more
+   features, so it is not a matched-schema baseline).
 
-```bash
-python -m training.train --threads 2
+Run outputs are written as JSON under `results/heterogeneous_schema/`.
+For validation-only profile screens (the test file is not loaded), run:
+
+```powershell
+python -m experiments.tune_heterogeneous_scorer --seeds 51 52 53 --rounds 5 --device cpu --profiles adaptive_pairs default_full quality_only quality_complementarity
 ```
 
-Trains on the training split, selects a checkpoint using validation loss, then
-evaluates that checkpoint on the held-out test split. It reports both a fixed
-0.5 threshold and a threshold selected using validation predictions only.
+The tuner supports all ten fixed pairs of the five scorer dimensions in
+addition to `adaptive_pairs`; pass the desired profile names with `--profiles`.
+Treat profile screening as exploratory and confirm any selection on new,
+untouched data.
 
-### 6. Run the local federated experiment sweep
+## Two-dataset GPU benchmark
 
-```bash
-python -m experiments.run_experiments --device cuda --threads 2 --batch-size 512 --rounds 20 --seeds 42 43 44
+The added 10k dataset is not directly accepted as raw input: it uses the label
+`is_fraud`, has a categorical `merchant_category`, and includes a transaction
+identifier. Prepare it with train-only scaling/encoding and a stratified split:
+
+```powershell
+python -m experiments.prepare_fraud_dataset --input data/raw/credit_card_fraud_10k.csv --output-dir data/processed/credit_card_fraud_10k --label-column is_fraud --drop-columns transaction_id
 ```
 
-Uses validation data for contribution scoring, threshold calibration, and
-per-round metrics. The test set is evaluated once after training. Configuration
-and per-round history are saved under `results/`.
-Robust methods (`median`, `trimmed_mean`, `krum`) and FedProx are also available.
-Use `--attack scale|sign_flip|noise` to inject a controlled client update attack.
-Data scenarios can be selected with `--scenario label_skew|quantity_skew|feature_skew|temporal|noisy_label`.
-For example, use `--scenario feature_skew` for cluster-based feature partitions,
-`--scenario temporal` for chronological bank windows, or
-`--scenario noisy_label --label-noise-rate 0.3 --noise-client 0` for label corruption.
+The manageable comparison defaults to five seeds, five rounds, clean and
+sign-flip settings. It evaluates both datasets separately, comparing FedAvg,
+FedProx, trimmed mean, and contribution-aware aggregation plus encoder+FedAvg,
+encoder+adaptive pairs, and a contextual full-schema FedAvg control:
 
-### 7. Inspect experiment results
+```powershell
+python -m experiments.run_benchmark_matrix --seeds 42 43 44 45 46 --rounds 5 --attacks none sign_flip --methods fedavg fedprox trimmed_mean contribution_aware
+```
 
-```bash
+This is an exploratory benchmark, not a publication-ready evaluation. Results and intermediate run files are
+saved incrementally under `results/benchmark_matrix_<timestamp>/`; a manifest
+tracks job status. Use `--results-dir` to choose a location and `--resume` to
+skip jobs already marked complete in that manifest. To request the larger
+20-seed, 20-round, four-attack sweep, specify the seeds, rounds, attacks
+(`none sign_flip scale noise`), and methods (`fedavg fedprox median trimmed_mean krum contribution_aware`) explicitly. Dataset scores are
+interpreted separately because sample size, features, and fraud prevalence
+differ. See [docs/benchmark_protocol.md](docs/benchmark_protocol.md) for
+baselines, attack definitions, papers, and confidence-interval caveats.
+
+After the pilot finishes, generate vector PDF figures and high-resolution PNG
+previews for the paper:
+
+```powershell
+python -m experiments.plot_benchmark_results --results-dir results\benchmark_pilot_5seed_5round_20261106
+```
+
+The output includes attack-specific ranked horizontal bar plots for PR-AUC
+and ROC-AUC, paired seed-difference plots against the matched FedAvg baseline,
+and an architecture diagram. Each ranking figure covers one attack condition
+and shows both datasets in separate panels, with rankings kept separate by
+track. Bars are sorted by mean score within each track and include 95%
+seed-based t intervals. By default, the plotter requires every planned
+dataset/track/attack job to be complete.
+For an explicitly labeled interim preview, add `--allow-partial`; partial
+figures are saved with a `_partial` suffix and should not be used as final
+results. Figures are written to the run's `figures/` directory as vector PDFs
+and 360-dpi PNG previews.
+
+## Dashboard
+
+```powershell
 python -m streamlit run dashboard/app.py
 ```
 
-Open the local URL printed by Streamlit (normally `http://localhost:8501`). The
-dashboard reads JSON artifacts from `results/`, filters and visualizes runs
-across artifacts, shows paired method deltas within each artifact, and retains
-the detailed round/client/scorer inspector. Partial runs and small seed counts
-are exploratory, not evidence of a reliable winner.
+The dashboard reads JSON files under `results/`. It summarizes artifacts,
+filters by dataset, compares matched methods by seed, and displays round histories, client
+aggregation influence, scorer dimensions, and adaptive local/utility pair
+weights. Newly launched runs populate the dashboard automatically.
 
-### 8. Run tests and the federated smoke check
+## Tests
 
-```bash
-python -m unittest tests.test_phase2_components
+```powershell
+python -m unittest discover -s tests -p test_phase2_components.py
 python -m fl.smoke_test
 ```
 
-The unit tests cover robust aggregation, attack transforms, scorer behavior,
-and scenario invariants. The smoke check generates three synthetic CSV files
-in the repository root (ignored by Git) and runs two rounds for four weighted
-aggregation strategies; it is a pipeline check, not a model-quality test.
+## Project map
 
----
-
-## Where to go next
-
-- **Codebase guide:** [guide.md](guide.md) — current functions/classes, all
-  preprocessing cells, update contracts, method rationale, and known gaps.
-- **Contributors (submit a bank model):** [CONTRIBUTING.md](CONTRIBUTING.md)
-- **Implementation status & next phases:** [DEV_LOG.md](DEV_LOG.md)
-
----
-
-## Notes
-
-Datasets, processed shards, experiment results, checkpoints, generated reports,
-and smoke-test CSVs are excluded from version control via `.gitignore`. Use your
-own copy of the dataset placed in `data/raw/`.
-
-## Current Limitations
-
-We are continuing Phase 2 evaluation. Current results use a small number of
-seeds and reuse the same held-out test set, so intervals describe seed
-variation rather than test-sample uncertainty. Performance varies by scenario;
-we have not found a consistent gain over FedAvg or robust baselines. Our
-heterogeneous encoder/torso components remain prototypes and are not yet
-connected to the federated training loop. See
-[docs/phase2_status.md](docs/phase2_status.md) for results and [guide.md](guide.md)
-for implementation details.
-
----
-
-## License
-
-Internal / academic project. See the individual license terms for the Kaggle
-dataset before redistribution.
+- `models/heterogeneous.py` — client-specific encoders and shared torso.
+- `fl/heterogeneous.py` — heterogeneous client/server training and scoring.
+- `fl/data_heg.py` — feature-schema inspection and matched shard generation.
+- `experiments/run_heterogeneous.py` — matched encoder/FedAvg/contribution
+  experiment.
+- `experiments/tune_heterogeneous_scorer.py` — validation-only profile screen.
+- `dashboard/app.py` — result and contribution-trace dashboard.
+- `docs/heterogeneous_architecture.md` — implementation and protocol details.
+- `docs/phase2_status.md` — current evidence and evaluation limitations.

@@ -1,14 +1,19 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import pandas as pd
 import torch
 
 from fl.aggregation import coordinate_median, krum, trimmed_mean
+from fl.data_heg import make_schema_shards
 from fl.robustness import transform_update
 from fl.scoring import ClientScorer
+from fl.heterogeneous import HeterogeneousClient, HeterogeneousFedServer
 from partition.scenarios import make_scenario_partitions
 from models.heterogeneous import HeterogeneousFraudModel
+from experiments.prepare_fraud_dataset import prepare_dataset
 
 
 class Phase2ComponentTests(unittest.TestCase):
@@ -55,6 +60,121 @@ class Phase2ComponentTests(unittest.TestCase):
         clone.load_shared_state_dict(shared)
         with self.assertRaises(ValueError):
             clone.load_shared_state_dict({"encoder.network.0.weight": torch.zeros(64, 11)})
+
+    def test_feature_keyed_encoder_initialization_is_stable(self):
+        left = HeterogeneousFraudModel(
+            input_dim=2, feature_names=["Time", "V1"], model_seed=17)
+        right = HeterogeneousFraudModel(
+            input_dim=3, feature_names=["V1", "Amount", "Time"], model_seed=17)
+        self.assertTrue(torch.equal(
+            left.encoder.network[0].weight[:, 1],
+            right.encoder.network[0].weight[:, 0]))
+        self.assertTrue(torch.equal(
+            left.torso.network[0].weight, right.torso.network[0].weight))
+
+    def test_preprocessing_supports_categorical_dataset_and_schema_shards(self):
+        rng = np.random.default_rng(7)
+        labels = np.asarray([0] * 80 + [1] * 20)
+        frame = pd.DataFrame({
+            "transaction_id": np.arange(len(labels)),
+            "amount": rng.normal(size=len(labels)),
+            "merchant_category": np.resize(
+                np.asarray(["food", "travel", "retail"]), len(labels)),
+            "is_fraud": labels,
+        })
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            source = root / "raw.csv"
+            frame.to_csv(source, index=False)
+            output = root / "processed"
+            metadata = prepare_dataset(
+                source, output, "is_fraud", ["transaction_id"], seed=8)
+            self.assertEqual(metadata["fraud_counts"]["train"], 14)
+            train = pd.read_csv(output / "train.csv")
+            self.assertIn("Class", train.columns)
+            self.assertNotIn("transaction_id", train.columns)
+            self.assertTrue(any(name.startswith("merchant_category_")
+                                for name in train.columns))
+            shards = make_schema_shards(
+                output / "train.csv", root / "shards", seed=9, num_clients=5)
+            self.assertEqual(len(shards), 5)
+            self.assertEqual(sum(value["rows"] for value in shards.values()),
+                             len(train))
+
+    def test_heterogeneous_attack_and_robust_aggregation(self):
+        rng = np.random.default_rng(4)
+        n = 120
+        labels = np.asarray([0, 1] * (n // 2), dtype=int)
+        rng.shuffle(labels)
+        frame = pd.DataFrame({
+            f"feature_{i}": rng.normal(loc=labels * (0.2 + i * 0.1), size=n)
+            for i in range(7)
+        })
+        frame["Class"] = labels
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            paths = []
+            for index in range(5):
+                path = root / f"bank_{index}.csv"
+                frame[[f"feature_{index}", f"feature_{(index + 1) % 7}",
+                       "Class"]].to_csv(path, index=False)
+                paths.append(path)
+            for aggregation in ("fedavg", "median", "trimmed_mean", "krum"):
+                clients = [
+                    HeterogeneousClient(
+                        f"bank_{index}", path, batch_size=32, seed=13)
+                    for index, path in enumerate(paths)
+                ]
+                server = HeterogeneousFedServer(
+                    clients, aggregation=aggregation, attack="sign_flip",
+                    attack_client=0, seed=13)
+                history = server.fit(rounds=1, local_epochs=1)
+                self.assertEqual(len(history), 1)
+                self.assertTrue(np.isfinite(server.evaluate(frame)["pr_auc"]))
+
+    def test_heterogeneous_contribution_scoring_aggregates_shared_torso(self):
+        rng = np.random.default_rng(32)
+        n = 120
+        labels = np.asarray([0, 1] * (n // 2), dtype=int)
+        rng.shuffle(labels)
+        frame = pd.DataFrame({
+            "Time": rng.normal(size=n),
+            "V1": rng.normal(loc=labels * 0.8, size=n),
+            "V2": rng.normal(loc=labels * 0.4, size=n),
+            "Class": labels,
+        })
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            left_path, right_path = root / "left.csv", root / "right.csv"
+            frame[["Time", "V1", "Class"]].to_csv(left_path, index=False)
+            frame[["Time", "V2", "Class"]].to_csv(right_path, index=False)
+            clients = [
+                HeterogeneousClient("left", left_path, batch_size=16, seed=8),
+                HeterogeneousClient("right", right_path, batch_size=16, seed=8),
+            ]
+            scorer = ClientScorer(seed=8, bootstrap_samples=4)
+            scorer.adaptive_pairs = True
+            server = HeterogeneousFedServer(
+                clients, aggregation="adaptive_pairs",
+                scorer=scorer,
+                reference_frame=frame)
+            server.fit(rounds=1, local_epochs=1)
+            record = server.history[0]
+            self.assertEqual(record["aggregation"], "adaptive_pairs")
+            self.assertAlmostEqual(sum(record["weights"]), 1.0)
+            self.assertEqual(len(record["weights"]), 2)
+            self.assertIn("complementarity_lcb", record["scores"])
+            np.testing.assert_allclose(
+                np.asarray(record["scores"]["local_pair_weight"])
+                + np.asarray(record["scores"]["utility_pair_weight"]),
+                np.ones(2))
+            self.assertTrue(np.all(
+                np.asarray(record["scores"]["utility_pair_weight"]) >= 0.2))
+            self.assertTrue(np.all(
+                np.asarray(record["scores"]["utility_pair_weight"]) <= 0.8))
+            self.assertTrue(all(key.startswith("torso.")
+                                for key in server.shared_state))
+            self.assertTrue(np.isfinite(server.evaluate(frame)["pr_auc"]))
 
     def test_reliability_penalizes_extreme_scale_not_directional_difference(self):
         scorer = ClientScorer(bootstrap_samples=0)

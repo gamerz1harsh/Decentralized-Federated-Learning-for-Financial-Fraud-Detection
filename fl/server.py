@@ -66,7 +66,11 @@ class FedServer:
         self.attack_client = int(attack_client)
         self.attack_scale = float(attack_scale)
         self.calibrate_threshold = bool(calibrate_threshold)
-        self.global_model = FraudDetectionModel().to(device)
+        input_dim = clients[0].dataset.x.shape[1]
+        if any(client.dataset.x.shape[1] != input_dim for client in clients):
+            raise ValueError("All standard-FL clients must use the same feature width")
+        self.input_dim = input_dim
+        self.global_model = FraudDetectionModel(input_dim=input_dim).to(device)
         self.global_state = {
             k: v.clone() for k, v in self.global_model.state_dict().items()}
         self.history = []
@@ -83,7 +87,7 @@ class FedServer:
 
     # ------------------------------------------------------------------
     def _probabilities(self, loader):
-        model = FraudDetectionModel().to(self.device)
+        model = FraudDetectionModel(input_dim=self.input_dim).to(self.device)
         model.load_state_dict(self.global_state)
         model.eval()
         probs, targets = [], []

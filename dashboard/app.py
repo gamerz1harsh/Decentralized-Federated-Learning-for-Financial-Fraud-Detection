@@ -10,7 +10,29 @@ from scipy.stats import t as student_t
 ROOT = Path(__file__).resolve().parents[1]
 RESULTS = ROOT / "results"
 METRICS = ["roc_auc", "pr_auc", "f1", "precision", "recall"]
-SCORE_NAMES = ["quality", "trust", "novelty", "complementarity", "temporal"]
+SCORE_NAMES = [
+    "quality", "trust", "novelty", "complementarity", "temporal",
+    "local_pair_weight", "utility_pair_weight",
+]
+
+
+def choose_fedavg_baseline(method_names):
+    """Prefer a same-encoder FedAvg control over a full-schema control."""
+    if "fedavg" in method_names:
+        return "fedavg"
+    encoder_baselines = [
+        name for name in method_names if name.endswith("_encoder_fedavg")
+    ]
+    if encoder_baselines:
+        return sorted(encoder_baselines)[0]
+    compatible = [
+        name for name in method_names
+        if name.endswith("_fedavg") and "full_schema" not in name
+    ]
+    if compatible:
+        return sorted(compatible)[0]
+    full_schema = [name for name in method_names if name.endswith("_fedavg")]
+    return sorted(full_schema)[0] if full_schema else None
 
 st.set_page_config(page_title="Federated Fraud Lab", page_icon="", layout="wide")
 st.title("Federated Fraud Lab")
@@ -19,7 +41,8 @@ if st.button("Refresh artifacts"):
     st.rerun()
 
 files = sorted(
-    (path for path in RESULTS.rglob("*.json") if not path.stem.endswith("_summary")),
+    (path for path in RESULTS.rglob("*.json")
+     if not path.stem.endswith("_summary") and path.name != "manifest.json"),
     key=lambda path: path.stat().st_mtime,
     reverse=True,
 )
@@ -61,6 +84,7 @@ for path, artifact in artifact_payloads.items():
     attack = config.get("attack") or "none"
     artifact_rows.append({
         "artifact": relative_path,
+        "dataset": config.get("dataset", "unspecified"),
         "scenario": scenario,
         "attack": attack,
         "rounds": str(config.get("rounds", "unknown")),
@@ -78,8 +102,17 @@ for path, artifact in artifact_payloads.items():
     for run in runs:
         method = run.get("method", "unknown")
         metrics = run.get("final_test_metrics")
+        scorer_profile = run.get("scorer_profile") or run.get("profile")
+        if not scorer_profile:
+            if "contribution_aware_" in method:
+                scorer_profile = method.split("contribution_aware_", 1)[1]
+            elif ":" in method:
+                scorer_profile = method.split(":", 1)[1]
+            else:
+                scorer_profile = "not_applicable"
         row = {
             "artifact": relative_path,
+            "dataset": run.get("dataset") or config.get("dataset", "unspecified"),
             "scenario": run.get("scenario") or scenario,
             "attack": attack,
             "rounds": str(config.get("rounds", "unknown")),
@@ -87,9 +120,7 @@ for path, artifact in artifact_payloads.items():
             "seed": run.get("seed"),
             "method": method,
             "aggregation": run.get("aggregation") or method.split(":", 1)[0],
-            "scorer_profile": run.get("scorer_profile") or (
-                method.split(":", 1)[1] if ":" in method else "not_applicable"
-            ),
+            "scorer_profile": scorer_profile,
             "has_final_test_metrics": isinstance(metrics, dict),
             "rounds_recorded": len(run.get("history", [])),
             "bootstrap": config.get("bootstrap_method", "not recorded"),
@@ -126,26 +157,31 @@ st.caption(
 if artifact_errors:
     st.warning(f"Skipped {len(artifact_errors)} unreadable or mid-write artifact(s).")
 
-filter_a, filter_b, filter_c, filter_d = st.columns(4)
+filter_a, filter_b, filter_c, filter_d, filter_e = st.columns(5)
+dataset_options = sorted(all_runs["dataset"].dropna().unique().tolist())
 scenario_options = sorted(all_runs["scenario"].dropna().unique().tolist())
 attack_options = sorted(all_runs["attack"].dropna().unique().tolist())
 round_options = sorted(all_runs["rounds"].dropna().unique().tolist())
 artifact_options = sorted(all_runs["artifact"].dropna().unique().tolist())
-selected_scenarios = filter_a.multiselect(
+selected_datasets = filter_a.multiselect(
+    "Dataset", dataset_options, default=dataset_options, key="overview_datasets"
+)
+selected_scenarios = filter_b.multiselect(
     "Scenario", scenario_options, default=scenario_options, key="overview_scenarios"
 )
-selected_attacks = filter_b.multiselect(
+selected_attacks = filter_c.multiselect(
     "Attack", attack_options, default=attack_options, key="overview_attacks"
 )
-selected_rounds = filter_c.multiselect(
+selected_rounds = filter_d.multiselect(
     "Rounds", round_options, default=round_options, key="overview_rounds"
 )
-selected_artifacts = filter_d.multiselect(
+selected_artifacts = filter_e.multiselect(
     "Artifacts", artifact_options, default=artifact_options, key="overview_artifacts"
 )
 
 overview_runs = all_runs[
-    all_runs["scenario"].isin(selected_scenarios)
+    all_runs["dataset"].isin(selected_datasets)
+    & all_runs["scenario"].isin(selected_scenarios)
     & all_runs["attack"].isin(selected_attacks)
     & all_runs["rounds"].isin(selected_rounds)
     & all_runs["artifact"].isin(selected_artifacts)
@@ -153,6 +189,7 @@ overview_runs = all_runs[
 overview_complete = overview_runs[overview_runs["has_final_test_metrics"]].copy()
 overview_artifacts = all_artifacts[
     all_artifacts["artifact"].isin(selected_artifacts)
+    & all_artifacts["dataset"].isin(selected_datasets)
     & all_artifacts["scenario"].isin(selected_scenarios)
     & all_artifacts["attack"].isin(selected_attacks)
     & all_artifacts["rounds"].isin(selected_rounds)
@@ -213,7 +250,7 @@ if not overview_complete.empty:
     paired_rows = []
     for artifact_name, artifact_frame in overview_complete.groupby("artifact"):
         available = set(artifact_frame["method"])
-        baseline = "fedavg" if "fedavg" in available else None
+        baseline = choose_fedavg_baseline(available)
         if baseline is None:
             quality_methods = [name for name in available
                                if name in {"contribution_aware:quality", "quality"}]
@@ -254,12 +291,12 @@ if not overview_complete.empty:
             & paired_all["metric"].eq(selected_overview_metric)
         ]
         st.subheader(f"Paired {selected_overview_metric.upper()} deltas")
-        st.caption("Baseline is FedAvg when present, otherwise quality-only. Intervals describe seed variation within each artifact.")
+        st.caption("Baseline prefers matched FedAvg (same encoder when available), otherwise quality-only. Intervals describe seed variation within each artifact.")
         st.dataframe(paired_all, width="stretch", hide_index=True)
 
     st.subheader("Run-level results")
     visible_columns = [
-        "artifact", "scenario", "attack", "rounds", "clients", "seed", "method",
+        "artifact", "dataset", "scenario", "attack", "rounds", "clients", "seed", "method",
         "scorer_profile", "has_final_test_metrics", "rounds_recorded", *METRICS,
     ]
     st.dataframe(overview_runs[visible_columns], width="stretch", hide_index=True)
@@ -333,11 +370,12 @@ else:
         display[metric.upper() + " | 95% CI"] = cells
     st.dataframe(display, width="stretch")
 
-    if "fedavg" in set(final["method"]):
-        fedavg = final[final["method"] == "fedavg"].set_index("seed")
+    fedavg_method = choose_fedavg_baseline(set(final["method"]))
+    if fedavg_method is not None:
+        fedavg = final[final["method"] == fedavg_method].set_index("seed")
         paired_rows = []
         for method in methods:
-            if method == "fedavg":
+            if method == fedavg_method:
                 continue
             candidate = final[final["method"] == method].set_index("seed")
             shared = fedavg.index.intersection(candidate.index)
@@ -347,6 +385,7 @@ else:
                 if len(deltas):
                     row = {
                         "method_vs_fedavg": method,
+                        "baseline": fedavg_method,
                         "metric": metric,
                         "mean_paired_delta": float(deltas.mean()),
                         "seeds_paired": int(len(deltas)),
@@ -425,13 +464,13 @@ else:
             st.caption("Krum selects one client update; the bar identifies the selected update.")
     trace_rows = []
     for trace_entry in history:
-        trace_scores = trace_entry.get("scores", {})
-        trace_ids = trace_entry.get("client_ids", ids)
+        trace_scores = trace_entry.get("scores") or {}
+        trace_ids = trace_entry.get("client_ids") or ids
         for signal in SCORE_NAMES:
-            for client, value in zip(trace_ids, trace_scores.get(signal, [])):
+            for client, value in zip(trace_ids, trace_scores.get(signal) or []):
                 trace_rows.append({"round": trace_entry.get("round"),
                                    "client": client, "signal": signal, "value": value})
-        for client, value in zip(trace_ids, trace_entry.get("weights", [])):
+        for client, value in zip(trace_ids, trace_entry.get("weights") or []):
             trace_rows.append({"round": trace_entry.get("round"), "client": client,
                                "signal": "aggregation_weight", "value": value})
     trace_frame = pd.DataFrame(trace_rows)
@@ -444,11 +483,50 @@ else:
         )
         selected_trace = trace_frame[trace_frame["signal"] == trace_signal]
         st.line_chart(selected_trace.pivot(index="round", columns="client", values="value"))
-    scores = entry.get("scores", {})
+    scores = entry.get("scores") or {}
     available = [name for name in SCORE_NAMES if name in scores]
     if available:
         score_frame = pd.DataFrame({name: scores[name] for name in available}, index=ids)
         st.dataframe(score_frame, width="stretch")
+        if "local_pair_weight" in scores and "utility_pair_weight" in scores:
+            pair_frame = pd.DataFrame({
+                "local_pair_weight": scores["local_pair_weight"],
+                "utility_pair_weight": scores["utility_pair_weight"],
+            }, index=ids)
+            st.caption(
+                "Adaptive pair weights for this round: local evidence combines "
+                "quality + trust; cross-client utility combines novelty + "
+                "complementarity."
+            )
+            st.dataframe(pair_frame, width="stretch")
+            influence_rows = []
+            for trace_entry in history:
+                trace_scores = trace_entry.get("scores", {})
+                trace_ids = trace_entry.get("client_ids", ids)
+                for position, client_id in enumerate(trace_ids):
+                    local = trace_scores.get("local_pair_weight", [])
+                    utility = trace_scores.get("utility_pair_weight", [])
+                    influence = trace_entry.get("weights", [])
+                    influence_rows.append({
+                        "client": client_id,
+                        "round": trace_entry.get("round"),
+                        "mean_aggregation_weight": (
+                            influence[position] if position < len(influence) else None),
+                        "local_pair_weight": (
+                            local[position] if position < len(local) else None),
+                        "utility_pair_weight": (
+                            utility[position] if position < len(utility) else None),
+                    })
+            if influence_rows:
+                st.subheader("Bank influence across rounds")
+                st.dataframe(
+                    pd.DataFrame(influence_rows).groupby("client", as_index=False)[
+                        ["mean_aggregation_weight", "local_pair_weight",
+                         "utility_pair_weight"]
+                    ].mean(),
+                    width="stretch",
+                    hide_index=True,
+                )
         raw = [name for name in ("complementarity_gain", "complementarity_lcb",
                                   "novelty_gain", "novelty_lcb") if name in scores]
         if raw:
@@ -464,7 +542,8 @@ with st.expander("How to read the contribution dimensions"):
         "- **Trust:** robust update-scale reliability, tempered by that client's own reliability history; not similarity to consensus.\n"
         "- **Novelty:** leave-one-out gain on hard fraud cases the incoming global model scores poorly.\n"
         "- **Complementarity:** leave-one-out gain in overall reference PR-AUC; the score uses a paired, class-stratified bootstrap lower bound.\n"
-        "- **Temporal:** smoothed history of lower-bound marginal utility."
+        "- **Temporal:** smoothed history of lower-bound marginal utility.\n"
+        "- **Adaptive pair weights:** bank-specific balance between local quality+trust and utility novelty+complementarity, modulated by measured reference utility and contribution history."
     )
 
 st.caption(f"Source: `{selected_path.relative_to(ROOT)}` | test metrics are final-only; never tune from this dashboard.")

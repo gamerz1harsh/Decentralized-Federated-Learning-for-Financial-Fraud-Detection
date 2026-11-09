@@ -55,7 +55,8 @@ class FedClient:
             torch.utils.data.Subset(self.dataset, self.val_idx.tolist()),
             batch_size=batch_size, shuffle=False)
 
-        self.model = FraudDetectionModel().to(device)
+        self.model = FraudDetectionModel(
+            input_dim=self.dataset.x.shape[1]).to(device)
         self.n_samples = len(self.train_idx)
 
     # ------------------------------------------------------------------

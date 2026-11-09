@@ -1,0 +1,765 @@
+\documentclass{ieeeaccess}
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+
+\setcounter{dbltopnumber}{2}
+\renewcommand{\dbltopfraction}{0.9}
+\renewcommand{\dblfloatpagefraction}{0.65}
+\makeatletter
+\setlength{\@dblfptop}{0pt}
+\setlength{\@dblfpbot}{0pt plus 1fil}
+\makeatother
+\makeatletter
+\let\IEEEAccessOriginalThebibliography\thebibliography
+\renewcommand{\thebibliography}[1]{%
+  \IEEEAccessOriginalThebibliography{#1}%
+  \setlength{\parskip}{0pt}%
+  \setlength{\itemsep}{0pt}%
+  \setlength{\parsep}{0pt}%
+}
+\makeatother
+
+\newsavebox{\paperfigbox}
+\newdimen\xfigwd
+\newcommand{\setbenchmarkfigure}[2]{%
+  \sbox{\paperfigbox}{\includegraphics[#2]{#1}}%
+  \global\xfigwd=\wd\paperfigbox
+  \usebox{\paperfigbox}%
+}
+\newcommand{\architecturecaption}[1]{%
+  \parbox[t]{0.80\columnwidth}{\raggedright #1}%
+}
+\newcommand{\resultcaption}[1]{%
+  \parbox[t]{0.84\textwidth}{\raggedright #1}%
+}
+\newcommand{\benchmarkfigure}[2]{%
+  \IfFileExists{results/benchmark_pilot_5seed_5round_20261106/figures/#1}{%
+    \setbenchmarkfigure{results/benchmark_pilot_5seed_5round_20261106/figures/#1}{#2}%
+  }{%
+    \IfFileExists{../results/benchmark_pilot_5seed_5round_20261106/figures/#1}{%
+      \setbenchmarkfigure{../results/benchmark_pilot_5seed_5round_20261106/figures/#1}{#2}%
+    }{%
+      \PackageError{benchmarkfigures}{Required figure #1 not found}{%
+        Generate the benchmark figures with experiments.plot_benchmark_results.}%
+    }%
+  }%
+}
+
+\begin{document}
+
+\history{Manuscript prepared November 2026}
+\doi{}
+
+\title{Adaptive Contribution Scoring for Heterogeneous Federated Fraud Detection}
+
+% The author list follows the prior manuscript; all authors must verify their
+% contribution, affiliation, contact details, and approval of the final draft.
+\author{\uppercase{Harsh Pathak}\authorrefmark{1},
+\uppercase{Siddhant Rathi}\authorrefmark{1},
+\uppercase{Aryan Kumar}\authorrefmark{1}, and
+\uppercase{Shaurya Singh Chauhan}\authorrefmark{1}}
+\address[1]{Student, VIT-AP University, Amaravati, Andhra Pradesh, India}
+\corresp{Corresponding author: Harsh Pathak (pathakharsh2004@gmail.com).}
+
+\begin{abstract}
+We study a federated fraud-detection prototype for clients with
+different feature sets. Each simulated client keeps its own encoder; only a
+shared prediction torso is aggregated. We test an adaptive contribution score
+that pairs local validation quality with update reliability, and hard-fraud
+novelty with leave-one-client-out complementarity. Its client-specific gate
+also uses temporal utility. The same-schema comparison covers FedAvg,
+FedProx, trimmed mean, and contribution-aware aggregation; the heterogeneous
+comparison uses encoder+FedAvg and encoder+adaptive pairs. We evaluate the
+MLG-ULB credit-card dataset and a separate 10,000-row Kaggle dataset
+\cite{miadul_dataset}, with five seeds, five communication rounds, and clean
+and sign-flip conditions. Our results are mixed: contribution-aware aggregation improves
+paired PR-AUC on MLG-ULB but not on the 10,000-row Kaggle dataset. The
+heterogeneous encoder comparison is uncertain on MLG-ULB and favors
+encoder+FedAvg on the smaller Kaggle dataset. With five seeds and only 23
+fraud cases in the smaller test split, we treat these findings as exploratory,
+not evidence of general superiority. We simulate clients as feature subsets,
+and our prototype is server-coordinated; it does not provide secure
+aggregation or differential privacy.
+\end{abstract}
+
+\begin{keywords}
+Federated learning, fraud detection, heterogeneous features, robust
+aggregation, client contribution, imbalanced classification
+\end{keywords}
+
+\titlepgskip=-15pt
+
+\maketitle
+
+\section{Introduction}
+Fraud is rare in transaction data, so accuracy alone can obscure how well a
+model finds it; precision--recall analysis is more informative in this
+setting \cite{saito2015}. At the same time, financial institutions may not be
+able to pool their transaction records. Federated learning offers a way to
+train a shared model while keeping raw records at their source
+\cite{mcmahan2017}.
+
+Standard federated averaging (FedAvg) assumes that participating clients can
+train compatible parameterizations \cite{mcmahan2017}. Statistical
+heterogeneity can cause client drift, while feature-schema heterogeneity makes
+direct averaging of complete model states ill-defined. Robust aggregation
+methods such as coordinate-wise median, trimmed mean, and Krum have also been
+studied under adversarial or Byzantine update assumptions
+\cite{yin2018,blanchard2017}. These methods address different failure modes
+and should not be interpreted as universal defenses.
+
+In our setting, the obstacle is not only the distribution of client data: clients may
+also have different input features, so their full model parameters cannot be
+averaged directly. We keep a feature-specific encoder at each client and
+aggregate a shared prediction torso. We then compare standard aggregation
+rules with a contribution score that combines local performance and update
+reliability with estimated usefulness to other clients. This is an empirical
+test of a heuristic, not a convergence or privacy guarantee.
+
+We evaluate the current implementation using newly generated benchmark
+artifacts; we do not include results from earlier project iterations.
+
+\subsection{Study Scope}
+We focus on three practical questions:
+\begin{itemize}
+  \item Can clients with different feature subsets train through local
+  encoders and a common prediction torso?
+  \item How does adaptive paired scoring compare with encoder-based FedAvg
+  and same-schema aggregation baselines?
+  \item Do the comparisons change under a simulated sign-flip update?
+\end{itemize}
+
+\section{Related Work}
+\subsection{Federated Averaging and Heterogeneous Optimization}
+FedAvg averages locally trained model parameters and can reduce the number of
+communication rounds relative to synchronized stochastic gradient descent
+\cite{mcmahan2017}. FedProx adds a proximal term to local training to address
+heterogeneity \cite{li2020}. SCAFFOLD uses control variates to reduce client
+drift \cite{karimireddy2020}; FedNova normalizes local updates to address
+objective inconsistency when clients perform unequal amounts of work
+\cite{wang2020}. Only FedAvg and FedProx are included in the same-schema
+comparison here; SCAFFOLD and FedNova provide context, not measured baselines.
+
+\subsection{Robust Aggregation}
+Krum selects an update using distances to neighboring updates
+\cite{blanchard2017}. Coordinate median and trimmed-mean rules have been
+analyzed for Byzantine-robust distributed learning \cite{yin2018}. We include
+trimmed mean and one synthetic sign-flip condition. That experiment is narrow:
+it does not establish resistance to adaptive or targeted poisoning.
+
+\subsection{Heterogeneous Federated Models and Client Utility}
+The encoder/shared-torso design gives clients with different tabular schemas
+a common set of parameters to aggregate. Feature-keyed initialization and a
+local proximal anchor are implementation choices; neither shows that the
+clients' latent representations are aligned. Likewise, counterfactual
+validation utility is only a proxy for cross-client usefulness. It is not a
+causal estimate of benefit to another institution. Data Shapley is one
+principled approach to data valuation, but the heuristic evaluated here is
+not a Shapley estimator and does not provide its axiomatic guarantees
+\cite{ghorbani2019}.
+
+\section{Method}
+\subsection{Problem Setup}
+Let client $k$ hold local rows $D_k$ with feature set $\mathcal{F}_k$ and binary
+label $y$. Each client has a local encoder $e_k(\cdot;\phi_k)$ and shares a
+torso $g(\cdot;\theta)$:
+\begin{equation}
+  \hat{y}=g(e_k(x_{\mathcal{F}_k};\phi_k);\theta).
+\end{equation}
+The encoder parameters $\phi_k$ remain client-specific. At each communication
+round, clients train locally and transmit torso updates; the coordinator
+aggregates only compatible $\theta$ tensors. Fig.~\ref{fig:architecture}
+summarizes the data and parameter flow.
+For a standard sample-weighted round, let $n_k=|D_k|$ and let
+$\theta_{k}^{(t+1)}$ denote client $k$'s returned torso. The server update is
+\begin{equation}
+  \theta^{(t+1)}=\sum_{k=1}^{K}\frac{n_k}{\sum_{j=1}^{K}n_j}
+  \theta_k^{(t+1)}.
+\end{equation}
+Contribution-aware runs replace the sample proportions with scorer-derived
+weights while still averaging only the shared torso.
+
+\begin{figure}[t]
+\centering
+\benchmarkfigure{architecture.pdf}{width=\columnwidth}
+\caption{\architecturecaption{Author-created schematic. Local encoders remain
+at their simulated clients. The coordinator aggregates the shared torso using
+client weights from the contribution score; the score uses local evidence
+and a common reference split.}}
+\label{fig:architecture}
+\end{figure}
+
+\subsection{Adaptive Paired Contribution Score}
+The scorer compares client updates using validation information and a
+coordinator-held reference split. Its local pair combines validation quality
+with update-scale reliability:
+\begin{equation}
+  L_k=\frac{Q_k+T_k}{2},
+\end{equation}
+where $Q_k$ is the robustly standardized client validation PR-AUC, passed
+through a logistic transform. To reduce the influence of a small number of
+validation fraud cases, a client's PR-AUC is shrunk toward the participating
+clients' median before standardization:
+\begin{equation}
+  \widetilde{p}_k=\operatorname{median}(p)
+  +\frac{m_k}{m_k+20}\bigl(p_k-\operatorname{median}(p)\bigr),
+\end{equation}
+where $p_k$ and $m_k$ are its validation PR-AUC and validation fraud count.
+The reliability term $T_k$ summarizes whether the torso-update norm is an
+extreme outlier relative to other clients in the same round. With
+$z_k=\log(\lVert\theta_k-\theta^{(t)}\rVert_2+\epsilon)$, the implementation
+uses the median $c$ of the $z_k$ values and robust scale
+$s=\max(1.4826\,\operatorname{MAD}(z),0.35)$:
+\begin{align}
+  a_k &= \max\bigl(|z_k-c|-2s,0\bigr),\\
+  T_k^{\mathrm{round}} &= \exp(-a_k/s),\\
+  T_k &= 0.75T_k^{\mathrm{round}}+0.25T_k^{\mathrm{prior}}.
+\end{align}
+This is a relative update-scale heuristic, not a test of whether an update is
+malicious.
+
+The utility pair is
+\begin{equation}
+  U_k=\frac{N_k+C_k}{2},
+\end{equation}
+where $N_k$ measures improvement on hard positive reference examples and
+$C_k$ measures leave-one-client-out reference PR-AUC gain. The full candidate
+state is a sample-weighted average of the received updates; for each client,
+the counterfactual state is the corresponding average with that client's
+update omitted. Complementarity is the full-state minus counterfactual
+average precision:
+\begin{equation}
+  \Delta_k^{\mathrm{AP}}
+  =\operatorname{AP}(\theta_{\mathrm{all}})
+  -\operatorname{AP}(\theta_{\mathrm{without}\ k}).
+\end{equation}
+The hard-positive set $\mathcal{H}$ contains reference fraud cases assigned
+the lowest probabilities by the current global model, up to the larger of
+eight cases or half the available positives. The novelty gain is
+\begin{equation}
+  \Delta_k^{\mathrm{hard}}
+  =\frac{1}{|\mathcal{H}|}\sum_{i\in\mathcal{H}}
+  \log p_{\mathrm{all},i}
+  -\frac{1}{|\mathcal{H}|}\sum_{i\in\mathcal{H}}
+  \log p_{\mathrm{without}\ k,i}.
+\end{equation}
+For each utility gain, the score uses the 10th-percentile lower bound from
+paired class-stratified bootstrap resamples. That lower bound is divided by
+the median absolute client lower bound for the round and passed through a
+logistic transform, giving normalized $N_k$ and $C_k$ values in $[0,1]$.
+Only eight bootstrap resamples were used per estimate in this pilot, so these
+lower bounds are coarse and should not be read as precise uncertainty
+intervals.
+
+The temporal signal $H_k$ is initialized at $0.5$. Thereafter, the raw
+complementarity lower bound is tracked with a $0.7$ exponential-moving-average
+decay and transformed by a logistic function with scale $0.01$. For the
+adaptive-pair profile, the client-specific gate is
+\begin{align}
+  s_k &= 0.7C_k+0.3H_k,\\
+  \lambda_k &= \operatorname{clip}(0.2+0.6s_k,0.2,0.8),\\
+  R_k &= (1-\lambda_k)L_k+\lambda_kU_k.
+\end{align}
+The client aggregation weights are
+\begin{equation}
+  w_k=\frac{\exp(R_k/\tau)}{\sum_j\exp(R_j/\tau)},\qquad \tau=0.35.
+\end{equation}
+The softmax makes the weights nonnegative and sum to one; $\tau$ controls how
+strongly score differences affect the final weights. These weights are
+recomputed for each round.
+The gate is heuristic and can be affected by reference-set composition,
+calibration, and small client validation samples. The same-schema
+contribution-aware baseline uses the five scorer dimensions with fixed
+coefficients (0.20, 0.20, 0.20, 0.25, and 0.15 for quality, trust, novelty,
+complementarity, and temporal utility, respectively); it is distinct from the
+adaptive-pair profile. In particular, results for that fixed-weight baseline
+must not be attributed to the adaptive gate used in the heterogeneous
+comparison.
+
+\subsection{Attack and Baseline Conditions}
+The same-schema experiment compares FedAvg, FedProx, coordinate-wise trimmed
+mean, and five-signal contribution-aware aggregation. The heterogeneous
+experiment compares encoder+FedAvg, encoder+adaptive paired scoring, and a
+full-schema FedAvg contextual reference. The latter uses more features and is
+not a matched-schema baseline.
+
+In the sign-flip condition, client 0's model delta is negated around the
+current global state at each round. The clean condition applies no update
+transformation. We use this synthetic perturbation to isolate a limited behavior; it does not
+model a complete adversary.
+
+\section{Experimental Design}
+\subsection{Datasets and Preprocessing}
+We downloaded the Kaggle ``Credit Card Fraud Detection'' collection
+associated with MLG-ULB \cite{creditcarddataset}. Our downloaded copy contains
+284,807 rows, 492 fraud labels, and 30 numeric predictors. We also downloaded
+the Kaggle ``Credit Card Fraud Detection Dataset'' \cite{miadul_dataset}. The
+copy we used contains 10,000 rows, 151 fraud labels, and a different set of
+transaction features. We excluded its transaction identifier, one-hot encoded
+its merchant category, and fit numeric transformations on the training
+partition only. We evaluate the datasets separately and do not pool their
+metrics.
+
+Table~\ref{tab:datasets} summarizes the raw sample sizes and model input
+dimensions. Table~\ref{tab:bas1-design} records the complete comparison
+structure and run protocol for this expanded presentation.
+\begin{table}[t]
+\caption{Characteristics of the Kaggle datasets used in our experiments}
+\label{tab:datasets}
+\centering
+\begin{tabular}{lrrrr}
+\toprule
+Dataset & Rows & Fraud & Rate & Inputs \\
+\midrule
+MLG-ULB (Kaggle) & 284,807 & 492 & 0.173\% & 30 \\
+Kaggle 10,000-row & 10,000 & 151 & 1.510\% & 12 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table*}[t]
+\caption{Benchmark design and run protocol}
+\label{tab:bas1-design}
+\centering
+\begin{tabular}{p{0.20\textwidth}p{0.73\textwidth}}
+\toprule
+Aspect & Implemented setting \\
+\midrule
+Same-schema track & FedAvg, FedProx, coordinate-wise trimmed mean, and fixed-weight contribution-aware aggregation. \\
+Heterogeneous track & Client-specific encoders with shared-torso FedAvg or adaptive paired scoring; full-schema FedAvg is an unmatched contextual reference. \\
+Client simulation & Five clients; label-skewed Dirichlet partitions ($\alpha=0.1$) for the standard track and feature-subset clients for the heterogeneous track. \\
+Training schedule & Seeds 42--46, five communication rounds, one local epoch per round, and batch size 1024. \\
+Conditions & Clean training and a synthetic sign-flip that negates client 0's model delta at each round. \\
+Scorer uncertainty & Eight class-stratified bootstrap draws per utility estimate; coarse pilot estimates only. \\
+Evaluation & Fixed test split per dataset; PR-AUC is primary and ROC-AUC secondary. Intervals summarize five seeds, not test-sample uncertainty. \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+
+We stratified the 10,000-row Kaggle dataset into 70\% training, 15\%
+validation, and 15\% test partitions. For MLG-ULB, we used its existing
+stratified partitions. We held both test partitions out until final evaluation.
+We ran five seeds and five communication rounds, with five simulated clients
+and one local epoch per round. Standard-track clients use label-skewed
+Dirichlet partitions ($\alpha=0.1$); the heterogeneous track uses five
+feature-subset clients with local encoders. We used batch size 1024, two CPU
+threads, and an NVIDIA GeForce RTX 5050 Laptop GPU. FedProx uses $\mu=0.01$,
+and the heterogeneous encoder alignment penalty uses
+$\mu_{\mathrm{align}}=0.01$. Our contribution scorer uses eight
+class-stratified bootstrap draws per utility estimate in this pilot. We retain
+the software, split hashes, per-seed configuration, and run status in the
+result artifacts.
+
+\subsection{Metrics and Statistical Reporting}
+PR-AUC is the primary ranking metric because the positive class is rare and
+precision--recall analysis is informative under strong class imbalance
+\cite{saito2015}.
+We compute average precision from the precision--recall curve:
+\begin{equation}
+  \mathrm{AP}=\sum_n(R_n-R_{n-1})P_n,
+\end{equation}
+where $P_n$ and $R_n$ are precision and recall at threshold $n$. This
+step-wise average-precision definition is used consistently for client
+validation and final test evaluation.
+Both experiment tracks report PR-AUC and ROC-AUC. The same-schema track also
+reports threshold-dependent F1, precision, and recall; these threshold metrics
+are not present in the heterogeneous-run artifacts.
+We report means and two-sided $t$ intervals across seeds. We form paired
+method deltas using the same seed values. These intervals describe
+training/partition variability on the fixed test rows; they do not quantify
+test-sample uncertainty. No multiple-comparison correction is applied.
+For five seed-level test scores $x_s$, the reported mean and interval are
+\begin{align}
+  \bar{x} &= \frac{1}{5}\sum_{s=1}^{5}x_s,\\
+  \mathrm{CI}_{95\%} &=
+  \bar{x}\ \pm\ t_{0.975,4}\frac{s_x}{\sqrt{5}},
+\end{align}
+where $s_x$ is the sample standard deviation across seeds. For each matched
+comparison, the seed-wise difference is formed before summarizing:
+\begin{equation}
+  \Delta_s = x_{s,\mathrm{candidate}}-x_{s,\mathrm{reference}}.
+\end{equation}
+Thus the paired interval reflects variation in five matched training runs on
+the same fixed test rows; it does not measure uncertainty from drawing a new
+test sample.
+
+\section{Results}
+We completed all eight planned benchmark jobs. Figs.~\ref{fig:clean-pr-ranks}
+and \ref{fig:signflip-pr-ranks} rank methods by mean test PR-AUC, with a
+separate figure for each attack condition. Within each dataset panel, ranks
+are calculated separately for the same-schema and heterogeneous tracks; the
+two tracks are not pooled into one leaderboard. The paired plots in
+Figs.~\ref{fig:clean-paired} and \ref{fig:signflip-paired}, together with
+Table~\ref{tab:paired-results}, compare contribution-aware methods against
+their matched FedAvg references using the same seeds. Table~\ref{tab:bas1-mean}
+adds the per-method PR-AUC means and seed intervals. Fig.~\ref{fig:bas1-seed-scatter}
+shows the matched seed-level scores against the identity line. ROC-AUC is shown
+as a secondary metric in separate attack-specific plots.
+
+\begin{figure*}[t]
+\centering
+\benchmarkfigure{bas1_ranked_none_pr_auc.pdf}{width=0.93\textwidth}
+\caption{\resultcaption{Clean-condition test PR-AUC rankings for both datasets. In each
+dataset, ranks are ordered by the five-seed mean within the same-schema and
+heterogeneous tracks separately. Bars show mean PR-AUC and whiskers show
+two-sided 95\% $t$ intervals over seeds 42--46 on the fixed test split.
+Full-schema FedAvg is contextual only because it uses more features. Rank
+order is descriptive and is not a significance test. Source: our
+visualization of completed benchmark artifacts; intervals are clipped to
+[0, 1] for display. Interpretation: on MLG-ULB, contribution-aware
+aggregation (0.719) and trimmed mean (0.718) are nearly tied in the
+same-schema track. On the 10,000-row data, FedAvg and FedProx are near 0.391,
+while contribution-aware aggregation is 0.281.}}
+\label{fig:clean-pr-ranks}
+\end{figure*}
+
+In the clean MLG-ULB panel, contribution-aware aggregation has the highest
+same-schema mean PR-AUC (0.719), but trimmed mean is nearly tied (0.718).
+Within the heterogeneous track, adaptive pairs reach 0.702, compared with
+0.687 for encoder+FedAvg; the full-schema model is an unmatched reference.
+The 10,000-row dataset gives a different ranking: FedAvg and FedProx are
+near 0.391 in the same-schema track, while contribution-aware aggregation
+reaches 0.281. In its heterogeneous track, the adaptive-pair mean is 0.265,
+below encoder+FedAvg at 0.302. Thus the clean ranking is dataset-dependent;
+the bars describe five-seed means, not statistically established superiority.
+
+\begin{figure*}[t]
+\centering
+\benchmarkfigure{bas1_ranked_sign_flip_pr_auc.pdf}{width=0.93\textwidth}
+\caption{\resultcaption{Test PR-AUC rankings under the simulated sign-flip condition, shown
+separately from clean training. Within each dataset, methods are ranked by
+five-seed mean within their respective track. Whiskers are two-sided 95\%
+$t$ intervals over seeds 42--46 on the fixed test split. Full-schema FedAvg
+is contextual only. Rank order is descriptive. Source: our
+visualization of completed benchmark artifacts; intervals are clipped to
+[0, 1] for display. Interpretation: the
+MLG-ULB same-schema means for contribution-aware aggregation and trimmed mean
+remain close (0.715 and 0.714). On the 10,000-row data, FedAvg averages 0.318
+and contribution-aware aggregation 0.219.}}
+\label{fig:signflip-pr-ranks}
+\end{figure*}
+
+Under sign flip, contribution-aware aggregation and trimmed mean remain
+closely ranked on MLG-ULB (mean PR-AUC 0.715 and 0.714). The heterogeneous
+adaptive-pair result is 0.705, while encoder+FedAvg is much more variable
+across seeds; its wide interval makes the apparent gap uncertain. On the
+10,000-row dataset, same-schema FedAvg averages 0.318 versus 0.219 for
+contribution-aware aggregation. In the heterogeneous track, encoder+FedAvg
+averages 0.253 and adaptive pairs 0.212. These results do not establish
+resistance to poisoning: the tested sign flip affects one simulated client
+and is only a narrow perturbation.
+
+\begin{figure*}[t]
+\centering
+\benchmarkfigure{bas1_ranked_none_roc_auc.pdf}{width=0.93\textwidth}
+\caption{\resultcaption{Clean-condition test ROC-AUC rankings for both datasets. Within each
+dataset, ranks are calculated separately for the same-schema and
+heterogeneous tracks. Bars show five-seed means and whiskers show two-sided
+95\% $t$ intervals on the fixed test split. Full-schema FedAvg is a
+contextual, unmatched reference. Source: our visualization of completed
+benchmark artifacts;
+intervals are clipped to [0, 1] for display. Interpretation: MLG-ULB
+same-schema ROC-AUC means are tightly clustered (0.954--0.958). On the
+10,000-row data, FedAvg and FedProx are about 0.906, versus 0.868 for
+contribution-aware aggregation.}}
+\label{fig:clean-roc-ranks}
+\end{figure*}
+
+ROC-AUC provides a complementary, less class-imbalance-sensitive ranking.
+On MLG-ULB, same-schema methods cluster between 0.954 and 0.958, so their
+ordering differs little in practical terms; the 10,000-row same-schema
+FedAvg/FedProx means are about 0.906, versus 0.868 for contribution-aware
+aggregation. In the smaller dataset's heterogeneous track, adaptive pairs
+have a mean of 0.911 and encoder+FedAvg 0.902. This differs from their
+PR-AUC ordering, underscoring why ROC-AUC alone is insufficient for a rare
+fraud class. Intervals still reflect five seeds on fixed test rows.
+
+\begin{figure*}[t]
+\centering
+\benchmarkfigure{bas1_ranked_sign_flip_roc_auc.pdf}{width=0.93\textwidth}
+\caption{\resultcaption{Test ROC-AUC rankings under the simulated sign-flip condition.
+Within each dataset, ranks are calculated separately for the same-schema and
+heterogeneous tracks. Bars show five-seed means and whiskers show two-sided
+95\% $t$ intervals on the fixed test split. Full-schema FedAvg is a
+contextual, unmatched reference. Source: our visualization of completed
+benchmark artifacts;
+intervals are clipped to [0, 1] for display. Interpretation: on MLG-ULB,
+FedAvg and FedProx are near 0.959 ROC-AUC, while contribution-aware
+aggregation is 0.954. On the 10,000-row data, same-schema FedAvg averages
+0.864 and contribution-aware aggregation 0.816; adaptive pairs lead
+encoder+FedAvg in the heterogeneous track (0.881 versus 0.851).}}
+\label{fig:signflip-roc-ranks}
+\end{figure*}
+
+The sign-flip ROC-AUC rankings are similarly mixed. On MLG-ULB, FedAvg and
+FedProx are near 0.959, while contribution-aware aggregation is 0.954. On
+the 10,000-row data, same-schema FedAvg averages 0.864 and contribution-aware
+aggregation 0.816; trimmed mean falls to 0.726. The heterogeneous
+adaptive-pair mean is 0.881, compared with 0.851 for encoder+FedAvg. These
+are descriptive means: large intervals on several methods, especially the
+full-schema MLG-ULB reference, preclude a strong ranking claim.
+
+\begin{figure*}[!tp]
+\centering
+\benchmarkfigure{bas1_paired_none_pr_auc.pdf}{width=0.93\textwidth}
+\caption{\resultcaption{Paired change in clean-condition test PR-AUC for each
+contribution-aware method relative to its matched FedAvg reference. Positive
+values favor the candidate; the dashed line marks no change. Small points
+show per-seed paired differences; diamonds and whiskers show the mean and
+two-sided 95\% $t$ interval. Source: our analysis of completed benchmark
+artifacts, seeds
+42--46; test rows are fixed within each dataset. Interpretation: the
+same-schema MLG-ULB change is positive, while both estimates for
+the 10,000-row Kaggle dataset are negative. The heterogeneous MLG-ULB interval is very wide and crosses
+zero, so our results do not show a consistent gain under this perturbation.}}
+\label{fig:clean-paired}
+\end{figure*}
+
+The paired plot isolates the change from each matched FedAvg baseline,
+removing between-seed level differences. Positive values on MLG-ULB favor
+contribution-aware aggregation in the same-schema track; the heterogeneous
+estimate is smaller and its interval crosses zero. Both paired estimates for
+the 10,000-row Kaggle dataset are negative; the clean heterogeneous interval
+excludes zero. This view makes the cross-dataset reversal clearer than rank alone,
+while remaining an exploratory five-seed comparison.
+
+\begin{figure*}[!tp]
+\centering
+\benchmarkfigure{bas1_paired_sign_flip_pr_auc.pdf}{width=0.93\textwidth}
+\caption{\resultcaption{Paired change in sign-flip-condition test PR-AUC for each
+contribution-aware method relative to its matched FedAvg reference. Positive
+values favor the candidate; the dashed line marks no change. Small points
+show per-seed paired differences; diamonds and whiskers show the mean and
+two-sided 95\% $t$ interval. Source: our analysis of completed benchmark
+artifacts, seeds
+42--46; test rows are fixed within each dataset.}}
+\label{fig:signflip-paired}
+\end{figure*}
+
+\begin{figure*}[t]
+\centering
+\benchmarkfigure{bas1_seed_scatter_pr_auc.pdf}{width=0.93\textwidth}
+\caption{\resultcaption{Seed-paired PR-AUC scores for each contribution-aware
+method against its matched FedAvg reference. Each point is one of seeds
+42--46; the dashed identity line indicates equal candidate and reference
+scores. Panels separate datasets, colors distinguish comparison tracks, and
+marker shapes distinguish clean and sign-flip conditions. These five points
+are descriptive and are not independent test samples.}}
+\label{fig:bas1-seed-scatter}
+\end{figure*}
+
+
+\begin{table*}[t]
+\caption{Paired change in test PR-AUC relative to the matched FedAvg baseline
+(encoder+FedAvg for the heterogeneous track). Source: per-seed benchmark
+artifacts, matched by random seed.}
+\label{tab:paired-results}
+\centering
+\begin{tabular}{llrr}
+\toprule
+Dataset & Condition & Same-schema $\Delta$PR-AUC (95\% CI) &
+Heterogeneous $\Delta$PR-AUC (95\% CI) \\
+\midrule
+MLG-ULB & Clean & $+0.040$ ($[0.013,\,0.068]$) & $+0.015$ ($[-0.012,\,0.042]$) \\
+MLG-ULB & Sign-flip & $+0.036$ ($[0.014,\,0.058]$) & $+0.260$ ($[-0.160,\,0.680]$) \\
+Kaggle 10,000-row & Clean & $-0.110$ ($[-0.258,\,0.038]$) & $-0.037$ ($[-0.069,\,-0.004]$) \\
+Kaggle 10,000-row & Sign-flip & $-0.098$ ($[-0.190,\,-0.007]$) & $-0.041$ ($[-0.133,\,0.052]$) \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\begin{table*}[t]
+\caption{Mean test PR-AUC and two-sided 95\% $t$ intervals across five seeds. The same-schema and heterogeneous columns are separate tracks; the full-schema contextual baseline is omitted.}
+\label{tab:bas1-mean}
+\centering
+\begin{tabular}{llcccc}
+\toprule
+Dataset & Condition & FedAvg & Contribution-aware & Encoder+FedAvg & Encoder+adaptive pairs \\
+\midrule
+MLG-ULB & Clean & 0.678 $\pm$ 0.026 & 0.719 $\pm$ 0.003 & 0.687 $\pm$ 0.032 & 0.702 $\pm$ 0.017 \\
+MLG-ULB & Sign-flip & 0.679 $\pm$ 0.019 & 0.715 $\pm$ 0.004 & 0.445 $\pm$ 0.419 & 0.705 $\pm$ 0.012 \\
+Kaggle 10,000-row & Clean & 0.391 $\pm$ 0.130 & 0.281 $\pm$ 0.207 & 0.302 $\pm$ 0.189 & 0.265 $\pm$ 0.176 \\
+Kaggle 10,000-row & Sign-flip & 0.318 $\pm$ 0.196 & 0.219 $\pm$ 0.182 & 0.253 $\pm$ 0.224 & 0.212 $\pm$ 0.143 \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+
+\subsection{Clean Condition}
+On the MLG-ULB dataset, the same-schema contribution-aware method had a mean
+paired PR-AUC increase of 0.040 under clean training and 0.036 under
+sign-flip updates. Both five-seed intervals were above zero. The heterogeneous
+adaptive-pair method had a smaller clean-data estimate of 0.015; its interval
+included zero. Under sign flip its estimate was 0.260, but the interval was
+wide and also included zero, reflecting substantial seed-to-seed variation.
+By mean PR-AUC, contribution-aware aggregation ranked first in both
+same-schema conditions; trimmed mean ranked a close second. In the clean
+heterogeneous panel, adaptive pairs ranked first, while under sign flip the
+same method again ranked first, alongside a much wider interval for the
+encoder+FedAvg reference.
+
+The 10,000-row Kaggle dataset shows a different pattern. Relative to
+same-schema FedAvg, contribution-aware aggregation had a paired PR-AUC change
+of -0.110 under clean training and -0.098 under sign flip. For the
+heterogeneous track, adaptive pairs were below encoder+FedAvg by 0.037 in the
+clean condition and 0.041 under sign flip; only the clean interval excluded
+zero. We therefore find no consistent cross-dataset improvement from
+contribution-aware weighting in this pilot. FedProx and FedAvg had the highest
+same-schema means in the clean and sign-flip panels, respectively.
+Encoder+FedAvg ranked above adaptive pairs in both heterogeneous panels. These
+are rankings of observed means, not evidence that closely spaced methods
+differ reliably.
+
+\subsection{Sign-Flip Condition}
+We observed smaller ROC-AUC changes, with no consistent direction across
+datasets and method tracks. On the 10,000-row dataset, just 23 fraud examples
+fall in the held-out test partition. Its PR-AUC intervals are consequently
+wide, and small changes in the ranking of a few positive examples can have a
+visible effect. The synthetic sign-flip condition should not be read as a
+general test of poisoning resistance.
+
+\subsection{Encoder Compatibility on the 10,000-Row Kaggle Dataset}
+We completed the encoder experiments on both datasets. On the 10,000-row
+Kaggle dataset, encoder+FedAvg exceeded adaptive pairs in mean PR-AUC in both
+conditions.
+Full-schema FedAvg appears as a contextual reference in
+Figs.~\ref{fig:clean-pr-ranks} and \ref{fig:signflip-pr-ranks}; it sees all
+input features and is not a matched-schema comparison.
+
+\section{Discussion}
+We evaluated both input schemas, but our results do not point to one best
+aggregation rule across them. Contribution-aware aggregation improved PR-AUC
+over same-schema FedAvg on the MLG-ULB split; the paired differences went the
+other way on the 10,000-row Kaggle dataset. The heterogeneous comparison was
+less decisive on MLG-ULB and favored encoder+FedAvg on the smaller dataset.
+These observations come from five seeds and one fixed test split per dataset;
+they do not show that one method will generalize to other banks or time
+periods.
+
+The 10,000-row Kaggle dataset has only 23 fraud examples in its held-out test
+partition. Its PR-AUC and threshold metrics are therefore sensitive to a small
+number of examples. Our fixed split and five seeds do not replace repeated
+stratified test sampling, temporal evaluation, or external validation.
+
+\section{Threats to Validity and Limitations}
+\begin{itemize}
+  \item The simulated clients are feature-subset partitions of pooled
+  datasets, not separate real financial institutions.
+  \item The coordinator architecture is not peer-to-peer decentralized FL.
+  \item The experiment does not provide differential privacy, secure
+  aggregation, encryption, or a formal privacy guarantee.
+  \item Feature-keyed initialization and proximal anchoring do not validate
+  latent-space alignment.
+  \item Contribution scoring queries a common reference set in the simulator;
+  it is not a deployable privacy-preserving client-valuation protocol.
+  \item Five seeds, five rounds, one fixed test split per dataset, and one
+  simple attack condition are exploratory and insufficient for broad
+  superiority or security claims.
+  \item The paired comparisons are exploratory and no adjustment for multiple
+  method comparisons was applied.
+  \item We evaluate selected comparators; we do not implement SCAFFOLD or
+  FedNova in these experiments.
+\end{itemize}
+
+\section{Conclusion}
+Our prototype combines client-specific tabular encoders, a shared torso, and
+adaptive paired contribution scoring. We conduct a limited comparison on two
+fixed datasets, simulate clients as feature subsets, and test one synthetic
+sign-flip condition. We limit our performance conclusions to these settings.
+A stronger evaluation would require independently held data, temporal
+testing, more seeds, realistic client ownership, and evidence that the learned
+client representations are aligned.
+
+\section*{Funding}
+We received no external funding for this research.
+
+\section*{Data Availability}
+We downloaded both datasets used in this study from their respective Kaggle
+listings: the MLG-ULB credit-card dataset [9] and the 10,000-row ``Credit Card
+Fraud Detection Dataset'' [10]. We used local copies of those downloads.
+Readers can access the dataset listings through the cited links; any
+redistribution of dataset files remains subject to the terms and licenses on
+their respective Kaggle pages. We will share processed data and run artifacts
+only when their licenses and privacy conditions permit.
+
+\clearpage
+\begin{thebibliography}{00}
+\bibitem{saito2015}
+T. Saito and M. Rehmsmeier, ``The precision-recall plot is more informative
+than the ROC plot when evaluating binary classifiers on imbalanced datasets,''
+\emph{PLOS ONE}, vol. 10, no. 3, Art. no. e0118432, Mar. 2015,
+\href{https://doi.org/10.1371/journal.pone.0118432}
+{doi: 10.1371/journal.pone.0118432}.
+
+\bibitem{mcmahan2017}
+B. McMahan, E. Moore, D. Ramage, S. Hampson, and B. A. y Arcas,
+``Communication-efficient learning of deep networks from decentralized
+data,'' in \emph{Proc. 20th Int. Conf. Artif. Intell. Stat.}, PMLR, vol. 54,
+2017, pp. 1273--1282.
+\href{https://proceedings.mlr.press/v54/mcmahan17a.html}
+{[Online]. Available: PMLR.}
+
+\bibitem{yin2018}
+D. Yin, Y. Chen, R. Kannan, and P. Bartlett, ``Byzantine-robust distributed
+learning: Towards optimal statistical rates,'' in \emph{Proc. ICML}, 2018,
+PMLR, vol. 80, pp. 5650--5659.
+\href{https://proceedings.mlr.press/v80/yin18a.html}
+{[Online]. Available: PMLR.}
+
+\bibitem{blanchard2017}
+P. Blanchard, E. M. El Mhamdi, R. Guerraoui, and J. Stainer,
+``Machine learning with adversaries: Byzantine tolerant gradient descent,''
+in \emph{Proc. NeurIPS}, 2017.
+\href{https://proceedings.neurips.cc/paper/2017/hash/f4b9ec30ad9f68f89b29639786cb62ef-Abstract.html}
+{[Online]. Available: NeurIPS.}
+
+\bibitem{li2020}
+T. Li, A. K. Sahu, M. Zaheer, M. Sanjabi, A. Talwalkar, and V. Smith,
+``Federated optimization in heterogeneous networks,'' in
+\emph{Proc. 3rd MLSys Conf.}, 2020.
+\href{https://proceedings.mlsys.org/paper_files/paper/2020/hash/1f5fe83998a09396ebe6477d9475ba0c-Abstract.html}
+{[Online]. Available: MLSys.}
+
+\bibitem{karimireddy2020}
+S. P. Karimireddy, S. Kale, M. Mohri, S. Reddi, S. Stich, and A. T. Suresh,
+``SCAFFOLD: Stochastic controlled averaging for federated learning,'' in
+\emph{Proc. 37th Int. Conf. Mach. Learn.}, PMLR, vol. 119, 2020,
+pp. 5132--5143.
+\href{https://proceedings.mlr.press/v119/karimireddy20a.html}
+{[Online]. Available: PMLR.}
+
+\bibitem{wang2020}
+J. Wang, Q. Liu, H. Liang, G. Joshi, and H. V. Poor, ``Tackling the
+objective inconsistency problem in heterogeneous federated optimization,''
+in \emph{Proc. Adv. Neural Inf. Process. Syst.}, vol. 33, 2020.
+\href{https://proceedings.neurips.cc/paper/2020/hash/564127c03caab942e503ee6f810f54fd-Abstract.html}
+{[Online]. Available: NeurIPS.}
+
+\bibitem{ghorbani2019}
+A. Ghorbani and J. Zou, ``Data Shapley: Equitable valuation of data for
+machine learning,'' in \emph{Proc. 36th Int. Conf. Mach. Learn.}, PMLR,
+vol. 97, 2019, pp. 2242--2251.
+\href{https://proceedings.mlr.press/v97/ghorbani19c.html}
+{[Online]. Available: PMLR.}
+
+\bibitem{creditcarddataset}
+MLG-ULB, ``Credit Card Fraud Detection,'' Kaggle dataset.
+Available: \href{https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud}
+{Kaggle dataset page}.
+Accessed: Nov. 6, 2026.
+
+\bibitem{miadul_dataset}
+Miadul, ``Credit Card Fraud Detection Dataset,'' Kaggle.
+Available: \href{https://www.kaggle.com/datasets/miadul/credit-card-fraud-detection-dataset/data}
+{Kaggle dataset page}.
+Accessed: Nov. 6, 2026.
+\end{thebibliography}
+
+\EOD
+\end{document}

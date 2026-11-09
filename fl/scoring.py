@@ -110,7 +110,8 @@ class ClientScorer:
 
     @staticmethod
     def _predict(state, loader, device):
-        model = FraudDetectionModel().to(device)
+        input_dim = state["network.0.weight"].shape[1]
+        model = FraudDetectionModel(input_dim=input_dim).to(device)
         model.load_state_dict(state)
         model.eval()
         probabilities, targets = [], []

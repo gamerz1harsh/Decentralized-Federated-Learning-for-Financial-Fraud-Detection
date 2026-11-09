@@ -1,5 +1,6 @@
 """Run repeatable single-machine federated baselines and save per-round results."""
 import argparse
+import hashlib
 import json
 import random
 from datetime import datetime, timezone
@@ -46,6 +47,7 @@ def main():
     parser.add_argument("--test", type=Path, default=ROOT / "data/processed/test.csv")
     parser.add_argument("--banks-dir", type=Path, default=ROOT / "data/processed/banks")
     parser.add_argument("--results-dir", type=Path, default=ROOT / "results")
+    parser.add_argument("--dataset-name", default="creditcard")
     parser.add_argument("--methods", nargs="+",
                         choices=["fedavg", "loss_weighted", "accuracy_weighted",
                                  "contribution_aware", "median", "trimmed_mean",
@@ -66,6 +68,7 @@ def main():
     parser.add_argument("--prox-mu", type=float, default=0.0)
     parser.add_argument("--attack", choices=["none", "scale", "sign_flip", "noise"], default="none")
     parser.add_argument("--attack-client", type=int, default=0)
+    parser.add_argument("--attack-scale", type=float, default=10.0)
     parser.add_argument("--scenario", choices=SCENARIOS, default="label_skew")
     parser.add_argument("--feature-clusters", type=int, default=8)
     parser.add_argument("--label-noise-rate", type=float, default=0.3)
@@ -110,9 +113,25 @@ def main():
             compare_methods.append(method)
 
     args.results_dir.mkdir(parents=True, exist_ok=True)
-    output = args.results_dir / f"federated_{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json"
+    output = args.results_dir / (
+        f"federated_{args.dataset_name}_{args.attack}_"
+        f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}.json")
     run = {
         "config": {"methods": compare_methods, "base_methods": args.methods,
+                   "dataset": args.dataset_name,
+                   "input_files": {
+                       "train": str(args.train.resolve()),
+                       "validation": str(args.validation.resolve()),
+                       "test": str(args.test.resolve()),
+                   },
+                   "input_sha256": {
+                       name: hashlib.sha256(path.read_bytes()).hexdigest()
+                       for name, path in (
+                           ("train", args.train),
+                           ("validation", args.validation),
+                           ("test", args.test),
+                       )
+                   },
                    "scorer_profiles": args.scorer_profiles,
                    "seeds": args.seeds, "rounds": args.rounds,
                    "local_epochs": args.local_epochs, "lr": args.lr, "alpha": args.alpha,
@@ -121,6 +140,7 @@ def main():
                    "threads": args.threads, "batch_size": args.batch_size,
                    "device": args.device, "prox_mu": args.prox_mu,
                    "attack": args.attack, "attack_client": args.attack_client,
+                   "attack_scale": args.attack_scale,
                    "scenario": args.scenario,
                    "feature_clusters": args.feature_clusters,
                    "label_noise_rate": args.label_noise_rate,
@@ -132,7 +152,7 @@ def main():
     }
 
     for seed in args.seeds:
-        bank_dir = args.banks_dir / (
+        bank_dir = args.banks_dir / args.dataset_name / (
             f"seed_{seed}_{args.scenario}_n{args.num_banks}_a{args.alpha:g}"
             f"_k{args.feature_clusters}_nr{args.label_noise_rate:g}"
             f"_nc{args.noise_client}"
@@ -190,6 +210,7 @@ def main():
                     prox_mu=effective_prox_mu,
                     attack=None if args.attack == "none" else args.attack,
                     attack_client=args.attack_client,
+                    attack_scale=args.attack_scale,
                     calibrate_threshold=True,
                     evaluate_test_each_round=False)
                 display_method = (method if profile in (None, "full")
@@ -199,7 +220,11 @@ def main():
                     "scorer_profile": profile or "not_applicable",
                     "history": [], "final_test_metrics": None,
                     "prox_mu": effective_prox_mu, "scenario": args.scenario,
-                    "client_shards": [str(path.relative_to(ROOT)) for path in bank_paths],
+                    "client_shards": [
+                        (str(path.relative_to(ROOT)) if path.is_relative_to(ROOT)
+                         else str(path.resolve()))
+                        for path in bank_paths
+                    ],
                 }
                 run["runs"].append(record)
 

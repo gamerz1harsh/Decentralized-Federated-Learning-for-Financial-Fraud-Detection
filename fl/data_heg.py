@@ -48,21 +48,38 @@ def common_features(reports, k=5):
     return sorted(shared, key=lambda name: (-scores[name], name))[:k]
 
 
-def make_schema_shards(train_path, output_dir, schemas=None, seed=42):
+def make_schema_shards(train_path, output_dir, schemas=None, seed=42,
+                       num_clients=3):
     """Write seeded, different real-column subsets with the original labels."""
     frame = pd.read_csv(train_path)
+    if "Class" not in frame or frame.empty:
+        raise ValueError(f"{train_path} must contain rows and a Class label")
+    rng = np.random.default_rng(seed)
     if schemas is None:
         features = [name for name in frame.columns if name != "Class"]
-        if len(features) < 20:
-            raise ValueError("Default schema example requires at least 20 features")
-        schemas = {
-            "bank_a": [features[0], *features[1:11]],
-            "bank_b": [features[-1], *features[5:21]],
-            "bank_c": [features[0], *features[15:29], features[-1]],
-        }
+        if num_clients < 2:
+            raise ValueError("At least two feature-schema clients are required")
+        if len(features) >= 20 and num_clients == 3:
+            schemas = {
+                "bank_a": [features[0], *features[1:11]],
+                "bank_b": [features[-1], *features[5:21]],
+                "bank_c": [features[0], *features[15:29], features[-1]],
+            }
+        else:
+            if not features:
+                raise ValueError("At least one feature is required")
+            order = rng.permutation(features).tolist()
+            width = max(1, int(np.ceil(0.7 * len(order))))
+            schemas = {}
+            for index in range(num_clients):
+                start = index * max(1, width // 2)
+                columns = [order[(start + offset) % len(order)]
+                           for offset in range(width)]
+                schemas[f"bank_{index}"] = list(dict.fromkeys(columns))
+    if len(schemas) < 2:
+        raise ValueError("At least two feature schemas are required")
     from partition.split_non_iid import capped_dirichlet_split
 
-    rng = np.random.default_rng(seed)
     class_parts = {}
     for label in (0, 1):
         class_parts[label] = capped_dirichlet_split(
@@ -78,7 +95,12 @@ def make_schema_shards(train_path, output_dir, schemas=None, seed=42):
             class_parts[label][bank_index] for label in (0, 1)
         ]).sample(frac=1, random_state=seed + bank_index)
         path = output_dir / f"{bank}.csv"
+        full_path = output_dir / f"{bank}_full_schema.csv"
         rows[[*columns, "Class"]].to_csv(path, index=False)
+        # Preserve the same client row partition for a matched full-schema
+        # FedAvg reference; only the available columns differ.
+        rows.to_csv(full_path, index=False)
         outputs[bank] = {"path": str(path), "features": list(columns),
+                         "full_schema_path": str(full_path),
                          "rows": len(rows), "fraud_rows": int(rows["Class"].sum())}
     return outputs
